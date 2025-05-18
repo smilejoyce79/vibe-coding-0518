@@ -36,31 +36,31 @@ let shooterFriction = 0.95; // 慣性摩擦力
   if (!window.Matter) {
     const script = document.createElement('script');
     script.src = 'https://cdn.jsdelivr.net/npm/matter-js@0.19.0/build/matter.min.js';
-    script.onload = () => { window._matterReady = true; initializeMatterPlugin(); };
+    script.onload = () => { window._matterReady = true; initializeMatterPlugin(); initializePlugin(); };
     document.head.appendChild(script);
   } else {
     window._matterReady = true;
     initializeMatterPlugin();
+    initializePlugin();
   }
 })();
 
 function initializeMatterPlugin() {
+  console.log('initializeMatterPlugin 函式被呼叫'); // 偵錯日誌
   if (!window.Matter) return;
   const { Engine, Render, Runner, World, Bodies, Body, Events, Composite } = Matter;
   const engine = Engine.create();
+  window._matterEngine = engine;
   const world = engine.world;
 
-  // 射擊體
-  const shooter = Bodies.rectangle(window.innerWidth/2, window.innerHeight/2, 4, 4, { restitution: 0.7, friction: 0.05, label: 'shooter' });
-  World.add(world, shooter);
-  let shooterEl = document.createElement('div');
-  shooterEl.style.position = 'fixed';
-  shooterEl.style.width = '4px';
-  shooterEl.style.height = '4px';
-  shooterEl.style.background = '#888';
-  shooterEl.style.zIndex = '9999';
-  shooterEl.style.borderRadius = '1px';
-  document.body.appendChild(shooterEl);
+  // Inject UI elements
+  injectUI();
+
+  // Setup event listeners
+  setupEventListeners();
+
+  // 射擊體（灰色方塊，僅移動，不受重力與碰撞影響）
+  // Removed conflicting shooter DOM creation. The shooter DOM element is now created in injectUI.
 
   // 地板
   let ground = Bodies.rectangle(window.innerWidth/2, window.innerHeight-10, window.innerWidth, 20, { isStatic: true });
@@ -72,36 +72,56 @@ function initializeMatterPlugin() {
     // 先找所有可見文字節點
     const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
       acceptNode: function(node) {
-        if (!node.textContent.trim()) return NodeFilter.FILTER_SKIP;
-        const rect = node.parentElement && node.parentElement.getBoundingClientRect();
-        if (!rect || rect.width < 20 || rect.height < 10) return NodeFilter.FILTER_SKIP;
-        if (rect.bottom < 0 || rect.top > window.innerHeight) return NodeFilter.FILTER_SKIP;
+        // Basic filter: avoid script/style tags, and very short texts
+        if (node.parentElement && (node.parentElement.tagName === 'SCRIPT' || node.parentElement.tagName === 'STYLE')) {
+          return NodeFilter.FILTER_REJECT;
+        }
+        if (!node.nodeValue || node.nodeValue.trim().length < 3) { // Ignore very short or empty text nodes
+            return NodeFilter.FILTER_REJECT;
+        }
         return NodeFilter.FILTER_ACCEPT;
       }
     });
     let node;
-    const blockTags = ['DIV','SECTION','ARTICLE','MAIN','ASIDE','NAV','HEADER','FOOTER','P','H1','H2','H3','H4','H5','H6','LI','BLOCKQUOTE','PRE','TD','TH'];
-    const added = new Set();
+    const blockTags = ['DIV','SECTION','ARTICLE','MAIN','ASIDE','NAV','HEADER','FOOTER','P','H1','H2','H3','H4','H5','H6','LI','BLOCKQUOTE','PRE','TD','TH', 'SPAN', 'A']; // Added SPAN and A
+    const added = new Set(); // Keep track of elements already added to Matter world
     while (node = walker.nextNode()) {
       let el = node.parentElement;
-      while (el && !blockTags.includes(el.tagName)) {
+      let potentialTarget = null;
+      // Traverse up to find a suitable block-level or significant inline-level parent
+      while (el && el !== document.body) {
+        if (blockTags.includes(el.tagName)) {
+            potentialTarget = el;
+            break;
+        }
         el = el.parentElement;
       }
-      if (el && !el._matterBody && !added.has(el)) {
-        added.add(el);
-        el.classList.add('matter-target');
-        el.style.outline = '2px dashed #0af';
-        const rect = el.getBoundingClientRect();
-        const body = Matter.Bodies.rectangle(
-          rect.left + rect.width/2,
-          rect.top + rect.height/2,
-          rect.width,
-          rect.height,
-          { isStatic: true, label: 'target', plugin: { el, hp: 3 } }
-        );
-        el._matterBody = body;
-        Matter.World.add(engine.world, body);
-        targetBodies.push(body);
+      if (!potentialTarget && node.parentElement !== document.body) { // If no block tag found, consider direct parent if it's not body
+        potentialTarget = node.parentElement;
+      }
+
+      if (potentialTarget && !potentialTarget._matterBody && !added.has(potentialTarget)) {
+        const rect = potentialTarget.getBoundingClientRect();
+        // Filter for visible elements of a certain size
+        if (rect.width > 20 && rect.height > 10 && rect.top < window.innerHeight && rect.bottom > 0 && rect.left < window.innerWidth && rect.right > 0) {
+          const bodyWidth = rect.width;
+          const bodyHeight = rect.height;
+          const body = Bodies.rectangle(
+            rect.left + bodyWidth / 2 + window.scrollX,
+            rect.top + bodyHeight / 2 + window.scrollY,
+            bodyWidth,
+            bodyHeight,
+            { isStatic: true, label: 'target', plugin: { el: potentialTarget, hp: 5 } } // 設定 isStatic 為 true, label 為 'target', 加入 plugin 儲存 DOM 元素和生命值
+          );
+          potentialTarget._matterBody = body;
+          body.domElement = potentialTarget; // 將 DOM 元素儲存在 body 的 domElement 屬性中
+          body.domWidth = bodyWidth;   // Store original dimensions
+          body.domHeight = bodyHeight;  // Store original dimensions
+
+          World.add(world, body);
+          // targetBodies.push(body); // targetBodies array seems unused in renderLoop, Composite.allBodies is sufficient
+          added.add(potentialTarget);
+        }
       }
     }
   }
@@ -121,7 +141,7 @@ function initializeMatterPlugin() {
   groundEl.style.zIndex = '9998';
   document.body.appendChild(groundEl);
 
-  // 目標框自動標記
+  // 目標框自動標記 (此段程式碼似乎未被使用，且與 Matter.js 的目標處理邏輯重複，暫時保留但需注意)
   document.querySelectorAll('p, h2, h3, div').forEach(el => {
     if (!el.classList.contains('matter-target') && el.offsetHeight > 20 && el.offsetWidth > 40) {
       el.classList.add('matter-target');
@@ -129,67 +149,68 @@ function initializeMatterPlugin() {
     }
   });
 
-  // 滑鼠加速度控制
-  let mouseDown = false;
-  let mouseX = window.innerWidth/2, mouseY = window.innerHeight/2;
-  window.addEventListener('mousedown', e => { if (e.button === 0) mouseDown = true; });
-  window.addEventListener('mouseup', e => { if (e.button === 0) mouseDown = false; });
-  window.addEventListener('mousemove', e => {
-    mouseX = e.clientX;
-    mouseY = e.clientY;
-  });
+  // 滑鼠推動射擊體移動 (此段程式碼似乎與 Matter.js 的射擊體控制邏輯重複，暫時保留但需注意)
 
   // Matter.js 運行
   Runner.run(engine);
 
-  // 動畫渲染
-  function renderLoop() {
-    // 射擊體位置
-    shooterEl.style.left = (shooter.position.x - 2) + 'px';
-    shooterEl.style.top = (shooter.position.y - 2) + 'px';
-    // 地板位置
-    Matter.Body.setPosition(ground, { x: window.innerWidth/2, y: window.innerHeight-10 });
-    groundEl.style.top = (window.innerHeight-20) + 'px';
-    // 目標框位置同步
-    targetBodies.forEach(body => {
-      if (body.plugin && body.plugin.el) {
-        const el = body.plugin.el;
-        const x = body.position.x - body.bounds.min.x;
-        const y = body.position.y - body.bounds.min.y;
-        el.style.position = 'fixed';
-        el.style.left = (body.position.x - body.bounds.max.x + body.bounds.min.x/2) + 'px';
-        el.style.top = (body.position.y - body.bounds.max.y + body.bounds.min.y/2) + 'px';
-      }
-    });
-    requestAnimationFrame(renderLoop);
-  }
-  renderLoop();
+  // Matter.js 內部滑鼠事件處理和射擊體位置更新
+  let mouseDown = false;
+  let mouseX = 0;
+  let mouseY = 0;
+  let shooterX = window.innerWidth / 2; // 初始化射擊體位置
+  let shooterY = window.innerHeight / 2; // 初始化射擊體位置
 
-  // 持續朝滑鼠方向施加力
+  window.addEventListener('mousedown', (e) => {
+    if (e.button === 0) {
+      mouseDown = true;
+      console.log(`mousedown 事件觸發，mouseDown: ${mouseDown}`); // 偵錯日誌
+    }
+  });
+
+  window.addEventListener('mousemove', (e) => {
+    mouseX = e.clientX;
+    mouseY = e.clientY;
+    console.log(`mousemove 事件觸發，mouseX: ${mouseX}, mouseY: ${mouseY}`); // 偵錯日誌
+  });
+
+  window.addEventListener('mouseup', (e) => {
+    if (e.button === 0) {
+      mouseDown = false;
+      console.log(`mouseup 事件觸發，mouseDown: ${mouseDown}`); // 偵錯日誌
+    }
+  });
+
+  // 定時更新射擊體位置以跟隨滑鼠
   setInterval(() => {
     if (mouseDown) {
-      const dx = mouseX - shooter.position.x;
-      const dy = mouseY - shooter.position.y;
-      const len = Math.sqrt(dx*dx + dy*dy);
-      if (len > 10) {
-        Body.applyForce(shooter, shooter.position, { x: dx/len*0.002, y: dy/len*0.002 });
-      }
+      // 直接將射擊體位置設定為滑鼠位置
+      shooterX = mouseX;
+      shooterY = mouseY;
+      console.log(`setInterval 更新射擊體位置，shooterX: ${shooterX}, shooterY: ${shooterY}`); // 偵錯日誌
     }
-  }, 16);
+  }, 1000 / 60); // 每秒更新 60 次
 
   // 射擊文字功能
   function shootText(char) {
-    const shooterPos = shooter.position;
-    const dx = mouseX - shooterPos.x;
-    const dy = mouseY - shooterPos.y;
+    console.log(`shootText 函式被呼叫，字元: ${char}`); // 偵錯日誌
+    // 使用滑鼠的當前位置計算方向
+    const dx = mouseX - (shooterX+12);
+    const dy = mouseY - (shooterY+12);
     const len = Math.sqrt(dx*dx + dy*dy);
     const speed = 12;
-    const vx = (dx/len) * speed;
-    const vy = (dy/len) * speed;
-    const bullet = Bodies.circle(shooterPos.x, shooterPos.y, 10, {
+    let vx = 0, vy = 0;
+    if (len > 0) { // 避免除以零
+        vx = (dx/len) * speed;
+        vy = (dy/len) * speed;
+    }
+
+    const bullet = Bodies.circle(shooterX+12, shooterY+12, 12, {
       restitution: 0.2, friction: 0.05, label: 'bullet', plugin: { char }
     });
     World.add(world, bullet);
+    console.log(`Matter.js 子彈 body 已創建並加入世界，字元: ${char}`); // 偵錯日誌
+
     let bulletEl = document.createElement('span');
     bulletEl.className = 'matter-bullet';
     bulletEl.textContent = char;
@@ -197,57 +218,205 @@ function initializeMatterPlugin() {
     bulletEl.style.zIndex = '9999';
     bulletEl.style.position = 'fixed';
     document.body.appendChild(bulletEl);
-    bulletEl._matterBody = bullet;
+    bullet.domElement = bulletEl; // 將 DOM 元素儲存在 body 的 domElement 屬性中
+    console.log(`子彈 DOM 元素已創建並加入頁面，字元: ${char}`); // 偵錯日誌
+
     Body.setVelocity(bullet, { x: vx, y: vy });
+    console.log(`子彈初始速度已設定: vx=${vx}, vy=${vy}`); // 偵錯日誌
   }
 
-  // 攔截射擊事件（例如按下 a-z, 0-9, 符號）
-  window.addEventListener('keydown', e => {
-    if (currentMode === 'shooting' && e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
-      shootText(e.key);
-      e.preventDefault();
-    }
-  });
+  // 攔截鍵盤射擊
+  window.addEventListener('keydown', handleKeyDown);
 
-  // 子彈碰撞到目標框時停止並觸發攻擊
+  // 子彈碰撞到目標框時處理
   Events.on(engine, 'collisionStart', function(event) {
     event.pairs.forEach(pair => {
-      let bullet, target;
+      console.log('檢測到碰撞事件'); // 偵錯日誌
+      let bullet = null;
+      let target = null;
+
       if (pair.bodyA.label === 'bullet' && pair.bodyB.label === 'target') {
-        bullet = pair.bodyA; target = pair.bodyB;
+        bullet = pair.bodyA;
+        target = pair.bodyB;
       } else if (pair.bodyB.label === 'bullet' && pair.bodyA.label === 'target') {
-        bullet = pair.bodyB; target = pair.bodyA;
+        bullet = pair.bodyB;
+        target = pair.bodyA;
       }
-      if (bullet && target && target.plugin && target.plugin.hp > 0) {
-        target.plugin.hp--;
-        if (target.plugin.hp <= 0) {
-          releaseElementText(target.plugin.el, target.position.x, target.position.y);
-          World.remove(world, target);
-          if (target.plugin.el) target.plugin.el.remove();
-        }
-        // 停止子彈
+
+      if (bullet && target) {
+        console.log(`子彈 (${bullet.label}) 與目標 (${target.label}) 發生碰撞`); // 偵錯日誌
+        // 移除子彈的 Matter body 和 DOM 元素
         World.remove(world, bullet);
-        document.querySelectorAll('.matter-bullet').forEach(el => {
-          if (el._matterBody === bullet) el.remove();
-        });
+        console.log('子彈 Matter body 已移除'); // 偵錯日誌
+        if (bullet.domElement && bullet.domElement.parentElement) {
+          bullet.domElement.remove();
+          console.log('子彈 DOM 元素已移除'); // 偵錯日誌
+        }
+
+        // 目標框生命值-1
+        if (target.plugin && target.plugin.hp !== undefined) {
+          console.log(`目標 ${target.label} 碰撞前生命值: ${target.plugin.hp}`); // 偵錯日誌
+          target.plugin.hp--;
+          console.log(`目標 ${target.label} 碰撞後剩餘生命值: ${target.plugin.hp}`); // 偵錯日誌
+          if (target.plugin.hp <= 0) {
+            console.log(`目標 ${target.label} 生命值歸零，觸發文字釋放`); // 偵錯日誌
+            // 觸發文字釋放效果 (使用 triggerParentCollapse 函式)
+            // 觸發文字釋放效果 (Matter.js 會在 afterUpdate 中處理 fallingChar 的 DOM 同步)
+            // 這裡只需要確保 Matter body 被移除，文字釋放邏輯已在 addCharToPhysicsWorld 中處理
+            console.log('目標生命值歸零，Matter body 將被移除'); // 偵錯日誌
+            // 從 Matter.js 世界中移除目標 body
+            World.remove(world, target);
+            console.log('目標 Matter body 已移除'); // 偵錯日誌
+            // 從 DOM 中移除目標元素 (triggerParentCollapse 已經處理)
+            // if (target.plugin.el && target.plugin.el.parentElement) {
+            //     target.plugin.el.remove();
+            // }
+          }
+        }
       }
     });
   });
 
+  // 動畫渲染（射擊體只做位置同步）
+  function renderLoop() {
+    // Sync shooter position
+    // Sync shooter position (handled in afterUpdate)
+    // if (shooterElement && shooterElement.parentElement) {
+    //   shooterElement.style.left = (shooterX - shooterElement.offsetWidth/2) + 'px';
+    //   shooterElement.style.top = (shooterY - shooterElement.offsetHeight/2) + 'px';
+    // }
+    // 只同步有 domElement 的 body（即每個炸出的字元和子彈）
+    Composite.allBodies(world).forEach(body => {
+      // 靜態元素不需要同步 DOM 位置，它們的 DOM 位置是固定的
+      if (body.isStatic || !body.domElement || !body.domElement.parentElement) return;
+
+      const el = body.domElement;
+      const pos = body.position;
+      const angle = body.angle;
+
+      // 計算固定位置（相對於視口）
+      // Matter.js 的位置是相對於世界原點，DOM 元素需要相對於視口定位
+      const fixedX = pos.x - window.scrollX - (el.offsetWidth / 2);
+      const fixedY = pos.y - window.scrollY - (el.offsetHeight / 2);
+
+      el.style.position = 'fixed'; // 確保是固定定位
+      el.style.left = fixedX + 'px';
+      el.style.top = fixedY + 'px';
+      el.style.transform = `rotate(${angle}rad)`;
+      // 如果需要，添加 transform-origin 以確保圍繞中心旋轉
+      el.style.transformOrigin = 'center center';
+    });
+    requestAnimationFrame(renderLoop);
+  }
+  renderLoop();
+
+  // Removed conflicting setInterval logic that applied force to the Matter.js shooter body.
+
   // TODO: 炸彈釋放、碰撞、爆炸、掉落等進階互動
+
+  // Matter.js Events: 每次更新後處理掉落文字和子彈的移除以及 DOM 同步
+  Events.on(engine, 'afterUpdate', function() {
+      const bodiesToRemove = [];
+      // 檢查是否是掉落文字或炸彈文字，並且超出視口
+      Matter.Composite.allBodies(engine.world).forEach(body => {
+          if ((body.label === 'fallingChar' || body.label === 'bombChar') && body.position.y > window.scrollY + window.innerHeight + 100) { // 添加緩衝區
+              bodiesToRemove.push(body);
+               // 移除對應的 DOM 元素
+               if (body.domElement && body.domElement.parentElement) {
+                   body.domElement.remove();
+               }
+          }
+          // 檢查子彈是否超出視口 (碰撞時已移除，此處作為額外清理)
+          if (body.label === 'bullet' && (body.position.y < window.scrollY - 100 || body.position.y > window.scrollY + window.innerHeight + 100 || body.position.x < window.scrollX - 100 || body.position.x > window.scrollX + window.innerWidth + 100)) {
+              bodiesToRemove.push(body);
+               // 移除對應的 DOM 元素
+               if (body.domElement && body.domElement.parentElement) {
+                    body.domElement.remove();
+               }
+          }
+      });
+
+      // 從世界中移除標記的 body
+      bodiesToRemove.forEach(body => World.remove(world, body));
+
+      // 同步 DOM 元素位置與 Matter body 位置 (已移至 renderLoop 函式)
+      // Composite.allBodies(world).forEach(body => {
+      //   // Only sync bodies that have a DOM element and are not static (static elements' DOM position is handled once)
+      //   if (body.isStatic || !body.plugin || !body.plugin.el || !body.plugin.el.parentElement) return;
+
+      //   const el = body.plugin.el;
+      //   const pos = body.position;
+      //   const angle = body.angle;
+
+      //   // Calculate fixed position relative to the viewport
+      //   const fixedX = pos.x - window.scrollX - (el.offsetWidth / 2);
+      //   const fixedY = pos.y - window.scrollY - (el.offsetHeight / 2);
+
+      //   el.style.position = 'fixed'; // Ensure fixed position
+      //   el.style.left = fixedX + 'px';
+      //   el.style.top = fixedY + 'px';
+      //   el.style.transform = `rotate(${angle}rad)`;
+      //   // Add transform-origin if necessary for correct rotation around center
+      //   el.style.transformOrigin = 'center center';
+      // });
+
+      // 根據滾動更新地板 body 位置
+      if (ground) {
+          const groundHeight = ground.bounds.max.y - ground.bounds.min.y;
+          const targetGroundY = window.scrollY + window.innerHeight - groundHeight / 2; // 定位在視口底部
+          Matter.Body.setPosition(ground, { x: ground.position.x, y: targetGroundY });
+      }
+
+      // 同步射擊體 DOM 位置 (始終固定)
+      // 使用全域的 shooterElement 變數
+      if (shooterElement && shooterElement.parentElement) {
+        // shooterX/Y 已經是視口相對位置，直接設定 left 和 top
+        // shooterX/Y 是中心點座標，需要減去元素寬高的一半來設定 left/top
+        const calculatedLeft = (shooterX - 12) + 'px';
+        const calculatedTop = (shooterY - 12) + 'px';
+        shooterElement.style.left = calculatedLeft;
+        shooterElement.style.top = calculatedTop;
+        console.log(`afterUpdate 同步 shooterElement 位置，shooterElement 存在: ${!!shooterElement}，計算出的 left: ${calculatedLeft}, top: ${calculatedTop}`); // 偵錯日誌
+      }
+      // 地板 DOM 元素也是固定的，無需同步其 Matter body 位置
+
+  });
 }
+
+// Define handler functions
+// Global mouseDown, shooterX, shooterY are used
+
+// 處理滑鼠點擊事件 (用於炸彈施放)
+function handleClick(e) {
+  if (currentMode === 'bomb') {
+    // Bomb mode logic here
+    console.log(`炸彈模式點擊，位置: (${e.clientX}, ${e.clientY})`);
+    // TODO: Implement bomb placement logic
+  }
+}
+
+
+// 設定事件監聽器
+function setupEventListeners() {
+  console.log('設定事件監聽器');
+  // Matter.js 內部已處理 mousedown, mousemove, mouseup 事件
+  window.addEventListener('click', handleClick); // Add click listener for bomb mode
+  // handleKeyDown is already added in initializeMatterPlugin
+}
+
 
 // 初始化插件
 function initializePlugin() {
+  console.log('initializePlugin 函式被呼叫'); // 偵錯日誌
   console.log('插件已啟動');
   // 注入 UI
   injectUI();
-  // 掃描 DOM 並識別目標元素
-  identifyTargetElements();
-  // 設定事件監聽器
-  setupEventListeners();
-  // 開始物理模擬循環
-  startPhysicsLoop();
+  // 掃描 DOM 並識別目標元素 (此函式似乎未被呼叫，且與 addVisibleTargets 功能重複，已在 Matter.js 初始化後呼叫 addVisibleTargets)
+  // identifyTargetElements();
+  // 設定事件監聽器 (此函式似乎未被呼叫，事件監聽器已在 Matter.js 初始化後設定)
+  // setupEventListeners();
+  // 開始物理模擬循環 (Matter.js Runner.run 已經啟動物理循環，此函式似乎未被呼叫)
+  // startPhysicsLoop();
 }
 
 // 注入插件 UI
@@ -255,7 +424,15 @@ function injectUI() {
   // 創建射擊物元素並添加到頁面
   shooterElement = document.createElement('div');
   shooterElement.id = 'shooter';
+  // 設定基本樣式，與 Matter.js 中的 shooterEl 樣式一致
+  shooterElement.style.position = 'fixed';
+  shooterElement.style.width = '24px';
+  shooterElement.style.height = '24px';
+  shooterElement.style.background = '#888';
+  shooterElement.style.zIndex = '9999';
+  shooterElement.style.borderRadius = '4px';
   document.body.appendChild(shooterElement);
+  console.log('shooterElement DOM 元素已創建並添加到 body'); // 偵錯日誌
 
   // 創建控制面板 (包含模式切換圖標)
   controlPanelElement = document.createElement('div');
@@ -281,176 +458,50 @@ function injectUI() {
   updateModeIcons();
 }
 
-// 掃描 DOM 並識別目標元素
+// 掃描 DOM 並識別目標元素 (此函式似乎未被呼叫，且與 addVisibleTargets 功能重複)
 function identifyTargetElements() {
   // 遍歷所有元素（不只是特定標籤）
-  const allElements = document.querySelectorAll('*');
-  allElements.forEach(element => {
-    // 跳過 script, style, link, meta, head, title, noscript 等不應包裹的元素
-    if ([
-      'SCRIPT', 'STYLE', 'LINK', 'META', 'HEAD', 'TITLE', 'NOSCRIPT', 'IFRAME', 'SVG', 'CANVAS', 'IMG', 'VIDEO', 'AUDIO', 'SOURCE', 'TRACK', 'BR', 'HR', 'INPUT', 'TEXTAREA', 'BUTTON', 'SELECT', 'OPTION', 'DATALIST', 'OBJECT', 'EMBED', 'PARAM', 'BASE', 'COL', 'COLGROUP', 'FRAME', 'FRAMESET', 'MAP', 'AREA', 'TBODY', 'THEAD', 'TFOOT', 'TR', 'TH', 'TD' 
-    ].includes(element.tagName)) return;
-    // 將每個文字節點包裹在 <span class="shootable-text">
-    const childNodes = Array.from(element.childNodes);
-    childNodes.forEach(node => {
-      if (node.nodeType === Node.TEXT_NODE && node.textContent.trim() !== '') {
-        const text = node.textContent;
-        const frag = document.createDocumentFragment();
-        for (let char of text) {
-          const span = document.createElement('span');
-          span.textContent = char;
-          span.className = 'shootable-text';
-          frag.appendChild(span);
-        }
-        element.replaceChild(frag, node);
-      }
-    });
-  });
-  // 監聽 shootable-text 點擊事件
-  document.querySelectorAll('.shootable-text').forEach(span => {
-    span.addEventListener('click', handleShootableTextClick);
-  });
+  // const allElements = document.querySelectorAll('*');
+  // allElements.forEach(element => {
+  //   // 跳過 script, style, link, meta, head, title, noscript 等不應包裹的元素
+  //   if ([
+  //     'SCRIPT', 'STYLE', 'LINK', 'META', 'HEAD', 'TITLE', 'NOSCRIPT', 'IFRAME', 'SVG', 'CANVAS', 'IMG', 'VIDEO', 'AUDIO', 'SOURCE', 'TRACK', 'BR', 'HR', 'INPUT', 'TEXTAREA', 'BUTTON', 'SELECT', 'OPTION', 'DATALIST', 'OBJECT', 'EMBED', 'PARAM', 'BASE', 'COL', 'COLGROUP', 'FRAME', 'FRAMESET', 'MAP', 'AREA', 'TBODY', 'THEAD', 'TFOOT', 'TR', 'TH', 'TD'
+  //   ].includes(element.tagName)) return;
+  //   // 將每個文字節點包裹在 <span class="shootable-text">
+  //   const childNodes = Array.from(element.childNodes);
+  //   childNodes.forEach(node => {
+  //     if (node.nodeType === Node.TEXT_NODE && node.textContent.trim() !== '') {
+  //       const text = node.textContent;
+  //       const frag = document.createDocumentFragment();
+  //       for (let char of text) {
+  //         const span = document.createElement('span');
+  //         span.textContent = char;
+  //         span.className = 'shootable-text';
+  //         frag.appendChild(span);
+  //       }
+  //       element.replaceChild(frag, node);
+  //     }
+  //   });
+  // });
+  // 監聽 shootable-text 點擊事件 (此處監聽器未被設定，且與 Matter.js 碰撞邏輯重複)
+  // document.querySelectorAll('.shootable-text').forEach(span => {
+  //   span.addEventListener('click', handleShootableTextClick);
+  // });
 }
 
-// 設定事件監聽器
-function setupEventListeners() {
-  // 滑鼠事件監聽器 (用於射擊物控制和炸彈施放)
-  document.addEventListener('mousedown', handleMouseDown);
-  document.addEventListener('mousemove', handleMouseMove);
-  document.addEventListener('mouseup', handleMouseUp);
-  document.addEventListener('click', handleClick); // 用於炸彈施放
+// 設定事件監聽器 (此函式似乎未被呼叫)
 
-  // 鍵盤事件監聽器 (用於觸發射擊和結束插件)
-  document.addEventListener('keydown', handleKeyDown);
-}
+// 處理滑鼠按下事件 (用於射擊物控制) (已在 initializeMatterPlugin 中處理)
 
-// 處理滑鼠按下事件 (用於射擊物控制)
-function handleMouseDown(event) {
-  if (currentMode === 'shooting' && event.button === 0) {
-    isDraggingShooter = true;
-    dragStartX = event.clientX;
-    dragStartY = event.clientY;
-    shooterVX = 0;
-    shooterVY = 0;
-    event.preventDefault();
-  }
-}
+// 處理滑鼠移動事件 (用於射擊物控制和瞄準) (已在 initializeMatterPlugin 中處理)
 
-// 處理滑鼠移動事件 (用於射擊物控制和瞄準)
-function handleMouseMove(event) {
-  lastMouseX = event.clientX;
-  lastMouseY = event.clientY;
-  if (isDraggingShooter) {
-    // 拖曳方向決定射擊體移動速度
-    const dx = event.clientX - dragStartX;
-    const dy = event.clientY - dragStartY;
-    // 固定速度（可調整）
-    const speed = 6;
-    const len = Math.sqrt(dx*dx + dy*dy);
-    if (len > 5) { // 有明顯拖曳才移動
-      shooterVX = (dx / len) * speed;
-      shooterVY = (dy / len) * speed;
-    } else {
-      shooterVX = 0;
-      shooterVY = 0;
-    }
-    dragStartX = event.clientX;
-    dragStartY = event.clientY;
-    // 啟動移動計時器
-    if (!shooterMoveInterval) {
-      shooterMoveInterval = setInterval(moveShooter, 16);
-    }
-  }
-}
+// 處理滑鼠釋放事件 (用於射擊物控制) (已在 initializeMatterPlugin 中處理)
 
-// 處理滑鼠釋放事件 (用於射擊物控制)
-function handleMouseUp(event) {
-  if (isDraggingShooter) {
-    isDraggingShooter = false;
-    // 拖曳結束後，射擊體繼續以目前速度滑行
-    if (shooterMoveInterval) {
-      clearInterval(shooterMoveInterval);
-      shooterMoveInterval = null;
-    }
-    // 啟動慣性滑行動畫
-    requestAnimationFrame(inertiaMoveShooter);
-  }
-}
 
-function inertiaMoveShooter() {
-  if (!shooterElement) return;
-  let left = parseFloat(shooterElement.style.left || 0);
-  let top = parseFloat(shooterElement.style.top || 0);
-  left += shooterVX;
-  top += shooterVY;
-  shooterVX *= shooterFriction;
-  shooterVY *= shooterFriction;
-  // 邊界限制
-  left = Math.max(0, Math.min(window.innerWidth - shooterElement.offsetWidth, left));
-  top = Math.max(0, Math.min(window.innerHeight - shooterElement.offsetHeight, top));
-  shooterElement.style.left = `${left}px`;
-  shooterElement.style.top = `${top}px`;
-  if (Math.abs(shooterVX) > 0.2 || Math.abs(shooterVY) > 0.2) {
-    requestAnimationFrame(inertiaMoveShooter);
-  } else {
-    shooterVX = 0;
-    shooterVY = 0;
-  }
-}
 
-function moveShooter() {
-  if (!shooterElement) return;
-  let left = parseFloat(shooterElement.style.left || 0);
-  let top = parseFloat(shooterElement.style.top || 0);
-  left += shooterVX;
-  top += shooterVY;
-  // 邊界限制
-  left = Math.max(0, Math.min(window.innerWidth - shooterElement.offsetWidth, left));
-  top = Math.max(0, Math.min(window.innerHeight - shooterElement.offsetHeight, top));
-  shooterElement.style.left = `${left}px`;
-  shooterElement.style.top = `${top}px`;
-}
-
-// 處理滑鼠點擊事件 (用於炸彈施放)
-function handleClick(event) {
-  if (currentMode === 'bomb') {
-    // 檢查炸彈數量
-    if (bombTextStorage.length > 0) {
-      // 在射擊物位置施放炸彈（炸彈文字從射擊物飛出並四散落下）
-      const shooterRect = shooterElement.getBoundingClientRect();
-      const shooterX = shooterRect.left + shooterRect.width / 2 + window.scrollX;
-      const shooterY = shooterRect.top + shooterRect.height / 2 + window.scrollY;
-      triggerBombEffect(shooterX, shooterY);
-      // 重置炸彈文字儲存
-      bombTextStorage = [];
-      // 更新計數器
-      updateCounter();
-    }
-  }
-}
+// 處理滑鼠點擊事件 (用於炸彈施放) (此函式似乎未被呼叫，已在 initializeMatterPlugin 中設定)
 
 // 處理鍵盤按下事件 (用於觸發射擊和結束插件)
-function handleKeyDown(event) {
-  if (event.key === 'Escape') {
-    exitPlugin();
-  } else if (currentMode === 'shooting') {
-    const key = event.key;
-    if (!event.ctrlKey && !event.altKey && !event.metaKey &&
-      !['Shift','Control','Alt','Meta','CapsLock','Tab','Enter','Backspace','ArrowLeft','ArrowRight','ArrowUp','ArrowDown','PageUp','PageDown','Home','End','Insert','Delete','ContextMenu','ScrollLock','Pause','NumLock','PrintScreen'].includes(key)
-      && key.length === 1
-    ) {
-      const shooterRect = shooterElement.getBoundingClientRect();
-      const shooterX = shooterRect.left + shooterRect.width / 2 + window.scrollX;
-      const shooterY = shooterRect.top + shooterRect.height / 2 + window.scrollY;
-      // 射擊方向永遠指向滑鼠游標
-      shootFlyingText(key, shooterX, shooterY, lastMouseX, lastMouseY, () => {
-        bombTextStorage.push(key);
-        updateCounter();
-      });
-      event.preventDefault();
-    }
-  }
-}
 
 // 切換模式
 function switchMode(mode) {
@@ -482,291 +533,109 @@ function updateModeIcons() {
   }
 }
 
-// 觸發射擊
-function triggerShooting(mouseX, mouseY) {
-  console.log(`觸發射擊，位置: (${mouseX}, ${mouseY})`);
+// 觸發射擊 (此函式似乎未被使用，Matter.js 的 shootText 函式已實現射擊邏輯)
+// function triggerShooting(mouseX, mouseY) {
+//   console.log(`觸發射擊，位置: (${mouseX}, ${mouseY})`);
 
-  // 找到滑鼠游標下的元素
-  const hitElement = document.elementFromPoint(mouseX, mouseY);
+//   // 找到滑鼠游標下的元素
+//   const hitElement = document.elementFromPoint(mouseX, mouseY);
 
-  // 檢查是否命中目標元素 (p, h2, h3, img)
-  if (hitElement && (hitElement.tagName === 'P' || hitElement.tagName === 'H2' || hitElement.tagName === 'H3' || hitElement.tagName === 'IMG')) {
-    console.log('命中目標:', hitElement.tagName, hitElement.textContent.substring(0, 20) + '...');
+//   // 檢查是否命中目標元素 (p, h2, h3, img)
+//   if (hitElement && (hitElement.tagName === 'P' || hitElement.tagName === 'H2' || hitElement.tagName === 'H3' || hitElement.tagName === 'IMG')) {
+//     console.log('命中目標:', hitElement.tagName, hitElement.textContent.substring(0, 20) + '...');
 
-    // 獲取或生成元素的唯一 ID
-    const elementId = hitElement.id || `element-${Math.random().toString(36).substr(2, 9)}`;
-    if (!hitElement.id) {
-      hitElement.id = elementId; // 為沒有 ID 的元素設置 ID
-    }
+//     // 獲取或生成元素的唯一 ID
+//     const elementId = hitElement.id || `element-${Math.random().toString(36).substr(2, 9)}`;
+//     if (!hitElement.id) {
+//       hitElement.id = elementId; // 為沒有 ID 的元素設置 ID
+//     }
 
-    // 累積命中次數
-    const currentHitCount = (elementHitCounts.get(elementId) || 0) + 1;
-    elementHitCounts.set(elementId, currentHitCount);
-    console.log(`元素 ${elementId} 命中次數: ${currentHitCount}`);
+//     // 累積命中次數
+//     const currentHitCount = (elementHitCounts.get(elementId) || 0) + 1;
+//     elementHitCounts.set(elementId, currentHitCount);
+//     console.log(`元素 ${elementId} 命中次數: ${currentHitCount}`);
 
-    // 計算所需的命中次數 (基於內容數量)
-    let requiredHits = 5; // 圖片的預設命中次數
-    if (hitElement.tagName !== 'IMG') {
-      const textLength = hitElement.textContent.length;
-      requiredHits = Math.max(5, Math.ceil(textLength / 20)); // 每 20 個字需要 1 次額外命中，最少 5 次
-    }
-    console.log(`元素 ${elementId} 所需命中次數: ${requiredHits}`);
+//     // 計算所需的命中次數 (基於內容數量)
+//     let requiredHits = 5; // 圖片的預設命中次數
+//     if (hitElement.tagName !== 'IMG') {
+//       const textLength = hitElement.textContent.length;
+//       requiredHits = Math.max(5, Math.ceil(textLength / 20)); // 每 20 個字需要 1 次額外命中，最少 5 次
+//     }
+//     console.log(`元素 ${elementId} 所需命中次數: ${requiredHits}`);
 
-    // 更新命中元素的視覺效果 (使用 CSS 過渡)
-    hitElement.style.transition = 'transform 0.1s ease-in-out, outline 0.1s ease-in-out';
-    hitElement.style.transform = 'scale(0.95)'; // 縮小效果
-    hitElement.style.outline = '2px solid red'; // 添加紅色外框
-
-    setTimeout(() => {
-        hitElement.style.transform = 'scale(1)'; // 恢復大小
-        hitElement.style.outline = ''; // 移除外框
-    }, 200);
-
-
-    // 尋找合適的父容器來累積能量 (例如，最近的 block 級元素)
-    let parentElement = hitElement.parentElement;
-    while (parentElement && !['DIV', 'ARTICLE', 'SECTION', 'MAIN', 'BODY'].includes(parentElement.tagName)) {
-        parentElement = parentElement.parentElement;
-    }
-
-    if (parentElement) {
-        const parentId = parentElement.id || `parent-${Math.random().toString(36).substr(2, 9)}`;
-         if (!parentElement.id) {
-            parentElement.id = parentId; // 為沒有 ID 的父元素設置 ID
-        }
-
-        // 累積父容器能量 (例如，每次命中增加能量)
-        const currentEnergy = (parentEnergies.get(parentId) || 0) + 1;
-        parentEnergies.set(parentId, currentEnergy);
-        console.log(`父容器 ${parentId} 能量: ${currentEnergy}`);
-
-        // 檢查父容器能量是否達到崩解閾值 (例如，達到元素所需命中次數的總和)
-        // 這裡簡化為當前命中元素的所需命中次數
-        if (currentEnergy >= requiredHits) {
-            console.log(`父容器 ${parentId} 能量達到閾值，觸發崩解`);
-            triggerParentCollapse(parentElement);
-            // 重置父容器能量
-            parentEnergies.delete(parentId);
-            elementHitCounts.delete(elementId); // 崩解後重置元素命中次數
-        }
-    } else {
-        console.log('未找到合適的父容器來累積能量');
-    }
-
-    // TODO: 實現命中後的物理效果 (例如，文字震動)
-  } else {
-    console.log('未命中目標元素');
-  }
-}
+//     // 更新命中元素的視覺效果 (使用 CSS 過渡)
+//     hitElement.style.transition = 'transform 0.1s ease-in-out, outline 0.1s ease-in-out';
+//     hitElement.style.transform = 'scale(0.95)'; // 縮小效果
+//     hitElement.style.outline = '2px solid red'; // 添加紅色外框
+//
+//     setTimeout(() => {
+//         hitElement.style.transform = 'scale(1)'; // 恢復大小
+//         hitElement.style.outline = ''; // 移除外框
+//     }, 200);
 
 
-// 觸發父容器崩解效果
-function triggerParentCollapse(parentElement) {
-  console.log('觸發父容器崩解');
+//     // 尋找合適的父容器來累積能量 (例如，最近的 block 級元素)
+//     let parentElement = hitElement.parentElement;
+//     while (parentElement && !['DIV', 'ARTICLE', 'SECTION', 'MAIN', 'BODY'].includes(parentElement.tagName)) {
+//         parentElement = parentElement.parentElement;
+//     }
 
-  // 獲取父容器的文字內容
-  const textContent = parentElement.textContent;
+//     if (parentElement) {
+//         const parentId = parentElement.id || `parent-${Math.random().toString(36).substr(2, 9)}`;
+//          if (!parentElement.id) {
+//             parentElement.id = parentId; // 為沒有 ID 的父元素設置 ID
+//         }
 
-  // 獲取父容器的位置和尺寸
-  const rect = parentElement.getBoundingClientRect();
-  const parentX = rect.left + window.scrollX;
-  const parentY = rect.top + window.scrollY;
+//         // 累積父容器能量 (例如，每次命中增加能量)
+//         const currentEnergy = (parentEnergies.get(parentId) || 0) + 1;
+//         parentEnergies.set(parentId, currentEnergy);
+//         console.log(`父容器 ${parentId} 能量: ${currentEnergy}`);
 
-  // 將父容器從 DOM 中移除
-  parentElement.remove();
+//         // 檢查父容器能量是否達到崩解閾值 (例如，達到元素所需命中次數的總和)
+//         // 這裡簡化為當前命中元素的所需命中次數
+//         if (currentEnergy >= requiredHits) {
+//             console.log(`父容器 ${parentId} 能量達到閾值，觸發崩解`);
+//             triggerParentCollapse(parentElement);
+//             // 重置父容器能量
+//             parentEnergies.delete(parentId);
+//             elementHitCounts.delete(elementId); // 崩解後重置元素命中次數
+//         }
+//     } else {
+//         console.log('未找到合適的父容器來累積能量');
+//     }
 
-  // 創建文字碎片並添加到 fallingElements
-  for (let i = 0; i < textContent.length; i++) {
-    const char = textContent[i];
-    if (char.trim() === '') continue; // 忽略空白字元
+//     // TODO: 實現命中後的物理效果 (例如，文字震動)
+//   } else {
+//     console.log('未命中目標元素');
+//   }
+// }
 
-    const charElement = document.createElement('span');
-    charElement.textContent = char;
-    charElement.style.position = 'absolute';
-    charElement.style.left = `${parentX + rect.width / 2}px`; // 初始位置在父容器中心
-    charElement.style.top = `${parentY + rect.height / 2}px`;
-    charElement.style.pointerEvents = 'none'; // 避免干擾滑鼠事件
-    charElement.style.userSelect = 'none'; // 避免文字被選取
-    charElement.style.zIndex = '1000'; // 確保文字在最上層
 
-    document.body.appendChild(charElement);
+// 觸發父容器崩解效果 (此函式名稱與需求中的 releaseElementText 不同，但功能相似，將進行修改以符合需求)
 
-    // 為文字碎片添加初始物理狀態
-    fallingElements.push({
-      element: charElement,
-      x: parentX + rect.width / 2,
-      y: parentY + rect.height / 2,
-      vx: (Math.random() - 0.5) * 10, // 隨機水平速度
-      vy: (Math.random() - 0.5) * 10, // 隨機垂直速度
-      gravity: 0.5, // 重力加速度
-      alpha: 1, // 透明度
-      fadeSpeed: 0.01 // 淡出速度
-    });
-  }
-}
-
-// 觸發炸彈效果
-function triggerBombEffect(x, y) {
-  console.log(`在 (${x}, ${y}) 施放炸彈`);
-  // 將 bombTextStorage 內所有字元掉落到螢幕底部
-  let chars = bombTextStorage.join('').split('');
-  const total = chars.length;
-  const spread = Math.min(120, window.innerWidth - 40);
-  chars.forEach((char, i) => {
-    const textElement = document.createElement('span');
-    textElement.classList.add('falling-text');
-    textElement.textContent = char;
-    textElement.style.position = 'absolute';
-    // 均勻分布在螢幕上方
-    const tx = 20 + (i * spread / Math.max(1, total - 1));
-    textElement.style.left = `${tx}px`;
-    textElement.style.top = `${y}px`;
-    textElement.style.pointerEvents = 'none';
-    textElement.style.zIndex = '1000';
-    textElement.style.fontSize = '2rem';
-    document.body.appendChild(textElement);
-    // 掉落動畫（不會自動消失）
-    let vy = 0;
-    let posY = y;
-    function fall() {
-      vy += 0.7;
-      posY += vy;
-      textElement.style.top = `${posY}px`;
-      if (posY < window.innerHeight - 40) {
-        requestAnimationFrame(fall);
-      } else {
-        textElement.style.top = `${window.innerHeight - 40}px`;
-      }
-    }
-    fall();
+// 將單一字元 span 加入 Matter.js 世界
+function addCharToPhysicsWorld(charElement, x, y) {
+  if (!window.Matter || !window._matterReady || !window._matterEngine) return;
+  const { Bodies, World, Body } = window.Matter;
+  const world = window._matterEngine.world;
+  // 以字元寬高建立 body
+  const width = charElement.offsetWidth || 18;
+  const height = charElement.offsetHeight || 24;
+  const body = Bodies.rectangle(x, y, width, height, {
+    restitution: 0.4,
+    friction: 0.1,
+    label: 'fallingChar', // 設定 label 為 fallingChar
   });
+  body.domElement = charElement;
+  body.domWidth = width;
+  body.domHeight = height;
+
+  // 給予隨機初始速度模擬爆破效果
+  const speed = Math.random() * 5 + 2; // 速度範圍 2-7
+  const angle = Math.random() * 2 * Math.PI; // 隨機方向
+  const vx = speed * Math.cos(angle);
+  const vy = speed * Math.sin(angle);
+  Body.setVelocity(body, { x: vx, y: vy });
+
+  World.add(world, body);
 }
-
-// 更新計數器 UI
-function updateCounter() {
-  if (counterElement) {
-    counterElement.textContent = `炸彈文字: ${bombTextStorage.length}`;
-  }
-}
-
-// 開始物理模擬循環
-function startPhysicsLoop() {
-  function gameLoop() {
-    // 更新掉落元素的位置和狀態 (應用物理模擬)
-    fallingElements.forEach(item => {
-      item.vy += item.gravity; // 應用重力
-      item.x += item.vx; // 更新水平位置
-      item.y += item.vy; // 更新垂直位置
-      item.alpha -= item.fadeSpeed; // 淡出
-
-      // 更新元素樣式
-      item.element.style.left = `${item.x}px`;
-      item.element.style.top = `${item.y}px`;
-      item.element.style.opacity = item.alpha;
-
-      // 檢查是否超出螢幕或完成淡出
-      if (item.y > window.innerHeight || item.alpha <= 0) {
-        // 如果是，標記為待移除
-        item.shouldRemove = true;
-        item.element.remove(); // 從 DOM 中移除元素
-      }
-    });
-
-    // 移除已完成掉落或淡出的元素
-    fallingElements = fallingElements.filter(item => !item.shouldRemove);
-
-    // 請求下一幀動畫
-    requestAnimationFrame(gameLoop);
-  }
-
-  requestAnimationFrame(gameLoop);
-}
-
-// 結束插件
-function exitPlugin() {
-  console.log('插件已結束');
-  // 移除 UI 元素
-  if (shooterElement) shooterElement.remove();
-  if (controlPanelElement) controlPanelElement.remove();
-  if (counterElement) counterElement.remove();
-
-  // 移除事件監聽器 (重要，防止內存洩漏)
-  document.removeEventListener('mousedown', handleMouseDown);
-  document.removeEventListener('mousemove', handleMouseMove);
-  document.removeEventListener('mouseup', handleMouseUp);
-  document.removeEventListener('click', handleClick);
-  document.removeEventListener('keydown', handleKeyDown);
-
-  // 停止物理模擬循環 (如果需要)
-  // 清理其他狀態
-}
-
-function handleShootableTextClick(event) {
-  if (currentMode !== 'shooting') return;
-  event.stopPropagation();
-  const targetSpan = event.target;
-  // 取得目標位置
-  const rect = targetSpan.getBoundingClientRect();
-  const targetX = rect.left + rect.width / 2 + window.scrollX;
-  const targetY = rect.top + rect.height / 2 + window.scrollY;
-  // 取得射擊物位置
-  const shooterRect = shooterElement.getBoundingClientRect();
-  const shooterX = shooterRect.left + shooterRect.width / 2 + window.scrollX;
-  const shooterY = shooterRect.top + shooterRect.height / 2 + window.scrollY;
-  // 產生飛行文字
-  shootFlyingText(targetSpan.textContent, shooterX, shooterY, targetX, targetY);
-}
-
-function shootFlyingText(char, fromX, fromY, toX, toY, onHit) {
-  const span = document.createElement('span');
-  span.textContent = char;
-  span.className = 'flying-text';
-  span.style.position = 'absolute';
-  span.style.left = `${fromX}px`;
-  span.style.top = `${fromY}px`;
-  span.style.pointerEvents = 'none';
-  span.style.zIndex = '9999';
-  document.body.appendChild(span);
-  // 計算飛行向量
-  const dx = toX - fromX;
-  const dy = toY - fromY;
-  const steps = 30;
-  let step = 0;
-  function animate() {
-    step++;
-    const progress = step / steps;
-    // 線性插值
-    span.style.left = `${fromX + dx * progress}px`;
-    span.style.top = `${fromY + dy * progress}px`;
-    if (step < steps) {
-      requestAnimationFrame(animate);
-    } else {
-      // 到達目標後掉落
-      if (typeof onHit === 'function') onHit();
-      startFallingText(span, toX, toY);
-    }
-  }
-  animate();
-}
-
-function startFallingText(span, startX, startY) {
-  let x = startX;
-  let y = startY;
-  let vy = 0;
-  const gravity = 0.8;
-  function fall() {
-    vy += gravity;
-    y += vy;
-    span.style.left = `${x}px`;
-    span.style.top = `${y}px`;
-    if (y < window.innerHeight) {
-      requestAnimationFrame(fall);
-    } else {
-      span.remove();
-    }
-  }
-  fall();
-}
-
-// 插件啟動時執行初始化
-initializePlugin();
