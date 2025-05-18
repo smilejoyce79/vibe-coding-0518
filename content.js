@@ -31,6 +31,135 @@ let shooterVY = 0;
 let shooterMoveInterval = null;
 let shooterFriction = 0.95; // 慣性摩擦力
 
+// 動態載入 Matter.js
+(function loadMatterJS() {
+  if (!window.Matter) {
+    const script = document.createElement('script');
+    script.src = 'https://cdn.jsdelivr.net/npm/matter-js@0.19.0/build/matter.min.js';
+    script.onload = () => { window._matterReady = true; initializeMatterPlugin(); };
+    document.head.appendChild(script);
+  } else {
+    window._matterReady = true;
+    initializeMatterPlugin();
+  }
+})();
+
+function initializeMatterPlugin() {
+  if (!window.Matter) return;
+  const { Engine, Render, Runner, World, Bodies, Body, Events, Composite } = Matter;
+  const engine = Engine.create();
+  const world = engine.world;
+
+  // 射擊體
+  const shooter = Bodies.circle(window.innerWidth/2, window.innerHeight/2, 30, { restitution: 0.7, friction: 0.05 });
+  World.add(world, shooter);
+
+  // 地板
+  let ground = Bodies.rectangle(window.innerWidth/2, window.innerHeight-10, window.innerWidth, 20, { isStatic: true });
+  World.add(world, ground);
+
+  // 目標框管理
+  let targetBodies = [];
+  function addVisibleTargets() {
+    document.querySelectorAll('.matter-target').forEach(el => {
+      if (!el._matterBody) {
+        const rect = el.getBoundingClientRect();
+        const body = Bodies.rectangle(
+          rect.left + rect.width/2,
+          rect.top + rect.height/2,
+          rect.width,
+          rect.height,
+          { isStatic: true, label: 'target', plugin: { el, hp: 3 } }
+        );
+        el._matterBody = body;
+        World.add(world, body);
+        targetBodies.push(body);
+      }
+    });
+  }
+  addVisibleTargets();
+  window.addEventListener('scroll', addVisibleTargets);
+
+  // 射擊體 DOM
+  let shooterEl = document.createElement('div');
+  shooterEl.style.position = 'fixed';
+  shooterEl.style.width = '60px';
+  shooterEl.style.height = '60px';
+  shooterEl.style.borderRadius = '50%';
+  shooterEl.style.background = 'gold';
+  shooterEl.style.zIndex = '9999';
+  document.body.appendChild(shooterEl);
+
+  // 地板 DOM
+  let groundEl = document.createElement('div');
+  groundEl.style.position = 'fixed';
+  groundEl.style.left = '0px';
+  groundEl.style.width = '100vw';
+  groundEl.style.height = '20px';
+  groundEl.style.bottom = '0px';
+  groundEl.style.background = '#222';
+  groundEl.style.zIndex = '9998';
+  document.body.appendChild(groundEl);
+
+  // 目標框自動標記
+  document.querySelectorAll('p, h2, h3, div').forEach(el => {
+    if (!el.classList.contains('matter-target') && el.offsetHeight > 20 && el.offsetWidth > 40) {
+      el.classList.add('matter-target');
+      el.style.outline = '2px dashed #0af';
+    }
+  });
+
+  // 滑鼠加速度控制
+  let mouseDown = false;
+  let mouseX = window.innerWidth/2, mouseY = window.innerHeight/2;
+  window.addEventListener('mousedown', e => { if (e.button === 0) mouseDown = true; });
+  window.addEventListener('mouseup', e => { if (e.button === 0) mouseDown = false; });
+  window.addEventListener('mousemove', e => {
+    mouseX = e.clientX;
+    mouseY = e.clientY;
+  });
+
+  // Matter.js 運行
+  Runner.run(engine);
+
+  // 動畫渲染
+  function renderLoop() {
+    // 射擊體位置
+    shooterEl.style.left = (shooter.position.x - 30) + 'px';
+    shooterEl.style.top = (shooter.position.y - 30) + 'px';
+    // 地板位置
+    Matter.Body.setPosition(ground, { x: window.innerWidth/2, y: window.innerHeight-10 });
+    groundEl.style.top = (window.innerHeight-20) + 'px';
+    // 目標框位置同步
+    targetBodies.forEach(body => {
+      if (body.plugin && body.plugin.el) {
+        const el = body.plugin.el;
+        const x = body.position.x - body.bounds.min.x;
+        const y = body.position.y - body.bounds.min.y;
+        el.style.position = 'fixed';
+        el.style.left = (body.position.x - body.bounds.max.x + body.bounds.min.x/2) + 'px';
+        el.style.top = (body.position.y - body.bounds.max.y + body.bounds.min.y/2) + 'px';
+      }
+    });
+    requestAnimationFrame(renderLoop);
+  }
+  renderLoop();
+
+  // 持續朝滑鼠方向施加力
+  setInterval(() => {
+    if (mouseDown) {
+      const dx = mouseX - shooter.position.x;
+      const dy = mouseY - shooter.position.y;
+      const len = Math.sqrt(dx*dx + dy*dy);
+      if (len > 10) {
+        Body.applyForce(shooter, shooter.position, { x: dx/len*0.002, y: dy/len*0.002 });
+      }
+    }
+  }, 16);
+
+  // TODO: 炸彈釋放、碰撞、爆炸、掉落等進階互動
+}
+
 // 初始化插件
 function initializePlugin() {
   console.log('插件已啟動');
