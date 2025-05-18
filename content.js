@@ -61,24 +61,36 @@ function initializeMatterPlugin() {
   // 目標框管理
   let targetBodies = [];
   function addVisibleTargets() {
-    document.querySelectorAll('.matter-target').forEach(el => {
-      if (!el._matterBody) {
-        const rect = el.getBoundingClientRect();
-        const body = Bodies.rectangle(
-          rect.left + rect.width/2,
-          rect.top + rect.height/2,
-          rect.width,
-          rect.height,
-          { isStatic: true, label: 'target', plugin: { el, hp: 3 } }
-        );
-        el._matterBody = body;
-        World.add(world, body);
-        targetBodies.push(body);
-      }
-    });
+    // 擴大選取範圍，並只處理螢幕內可見且有文字的區塊
+    document.querySelectorAll('div,section,article,main,aside,nav,header,footer,p,h1,h2,h3,h4,h5,h6,li,blockquote,pre,td,th')
+      .forEach(el => {
+        if (
+          !el._matterBody &&
+          el.offsetHeight > 20 && el.offsetWidth > 40 &&
+          el.innerText && el.innerText.trim().length > 0 &&
+          el.getBoundingClientRect().bottom > 0 &&
+          el.getBoundingClientRect().top < window.innerHeight
+        ) {
+          el.classList.add('matter-target');
+          el.style.outline = '2px dashed #0af';
+          const rect = el.getBoundingClientRect();
+          const body = Matter.Bodies.rectangle(
+            rect.left + rect.width/2,
+            rect.top + rect.height/2,
+            rect.width,
+            rect.height,
+            { isStatic: true, label: 'target', plugin: { el, hp: 3 } }
+          );
+          el._matterBody = body;
+          Matter.World.add(engine.world, body);
+          targetBodies.push(body);
+        }
+      });
   }
   addVisibleTargets();
   window.addEventListener('scroll', addVisibleTargets);
+  window.addEventListener('resize', addVisibleTargets);
+  document.addEventListener('DOMContentLoaded', addVisibleTargets);
 
   // 射擊體 DOM
   let shooterEl = document.createElement('div');
