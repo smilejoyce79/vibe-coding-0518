@@ -51,8 +51,16 @@ function initializeMatterPlugin() {
   const world = engine.world;
 
   // 射擊體
-  const shooter = Bodies.circle(window.innerWidth/2, window.innerHeight/2, 30, { restitution: 0.7, friction: 0.05 });
+  const shooter = Bodies.rectangle(window.innerWidth/2, window.innerHeight/2, 4, 4, { restitution: 0.7, friction: 0.05, label: 'shooter' });
   World.add(world, shooter);
+  let shooterEl = document.createElement('div');
+  shooterEl.style.position = 'fixed';
+  shooterEl.style.width = '4px';
+  shooterEl.style.height = '4px';
+  shooterEl.style.background = '#888';
+  shooterEl.style.zIndex = '9999';
+  shooterEl.style.borderRadius = '1px';
+  document.body.appendChild(shooterEl);
 
   // 地板
   let ground = Bodies.rectangle(window.innerWidth/2, window.innerHeight-10, window.innerWidth, 20, { isStatic: true });
@@ -61,46 +69,46 @@ function initializeMatterPlugin() {
   // 目標框管理
   let targetBodies = [];
   function addVisibleTargets() {
-    // 擴大選取範圍，並只處理螢幕內可見且有文字的區塊
-    document.querySelectorAll('div,section,article,main,aside,nav,header,footer,p,h1,h2,h3,h4,h5,h6,li,blockquote,pre,td,th')
-      .forEach(el => {
-        if (
-          !el._matterBody &&
-          el.offsetHeight > 20 && el.offsetWidth > 40 &&
-          el.innerText && el.innerText.trim().length > 0 &&
-          el.getBoundingClientRect().bottom > 0 &&
-          el.getBoundingClientRect().top < window.innerHeight
-        ) {
-          el.classList.add('matter-target');
-          el.style.outline = '2px dashed #0af';
-          const rect = el.getBoundingClientRect();
-          const body = Matter.Bodies.rectangle(
-            rect.left + rect.width/2,
-            rect.top + rect.height/2,
-            rect.width,
-            rect.height,
-            { isStatic: true, label: 'target', plugin: { el, hp: 3 } }
-          );
-          el._matterBody = body;
-          Matter.World.add(engine.world, body);
-          targetBodies.push(body);
-        }
-      });
+    // 先找所有可見文字節點
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+      acceptNode: function(node) {
+        if (!node.textContent.trim()) return NodeFilter.FILTER_SKIP;
+        const rect = node.parentElement && node.parentElement.getBoundingClientRect();
+        if (!rect || rect.width < 20 || rect.height < 10) return NodeFilter.FILTER_SKIP;
+        if (rect.bottom < 0 || rect.top > window.innerHeight) return NodeFilter.FILTER_SKIP;
+        return NodeFilter.FILTER_ACCEPT;
+      }
+    });
+    let node;
+    const blockTags = ['DIV','SECTION','ARTICLE','MAIN','ASIDE','NAV','HEADER','FOOTER','P','H1','H2','H3','H4','H5','H6','LI','BLOCKQUOTE','PRE','TD','TH'];
+    const added = new Set();
+    while (node = walker.nextNode()) {
+      let el = node.parentElement;
+      while (el && !blockTags.includes(el.tagName)) {
+        el = el.parentElement;
+      }
+      if (el && !el._matterBody && !added.has(el)) {
+        added.add(el);
+        el.classList.add('matter-target');
+        el.style.outline = '2px dashed #0af';
+        const rect = el.getBoundingClientRect();
+        const body = Matter.Bodies.rectangle(
+          rect.left + rect.width/2,
+          rect.top + rect.height/2,
+          rect.width,
+          rect.height,
+          { isStatic: true, label: 'target', plugin: { el, hp: 3 } }
+        );
+        el._matterBody = body;
+        Matter.World.add(engine.world, body);
+        targetBodies.push(body);
+      }
+    }
   }
   addVisibleTargets();
   window.addEventListener('scroll', addVisibleTargets);
   window.addEventListener('resize', addVisibleTargets);
   document.addEventListener('DOMContentLoaded', addVisibleTargets);
-
-  // 射擊體 DOM
-  let shooterEl = document.createElement('div');
-  shooterEl.style.position = 'fixed';
-  shooterEl.style.width = '60px';
-  shooterEl.style.height = '60px';
-  shooterEl.style.borderRadius = '50%';
-  shooterEl.style.background = 'gold';
-  shooterEl.style.zIndex = '9999';
-  document.body.appendChild(shooterEl);
 
   // 地板 DOM
   let groundEl = document.createElement('div');
@@ -137,8 +145,8 @@ function initializeMatterPlugin() {
   // 動畫渲染
   function renderLoop() {
     // 射擊體位置
-    shooterEl.style.left = (shooter.position.x - 30) + 'px';
-    shooterEl.style.top = (shooter.position.y - 30) + 'px';
+    shooterEl.style.left = (shooter.position.x - 2) + 'px';
+    shooterEl.style.top = (shooter.position.y - 2) + 'px';
     // 地板位置
     Matter.Body.setPosition(ground, { x: window.innerWidth/2, y: window.innerHeight-10 });
     groundEl.style.top = (window.innerHeight-20) + 'px';
@@ -168,6 +176,63 @@ function initializeMatterPlugin() {
       }
     }
   }, 16);
+
+  // 射擊文字功能
+  function shootText(char) {
+    const shooterPos = shooter.position;
+    const dx = mouseX - shooterPos.x;
+    const dy = mouseY - shooterPos.y;
+    const len = Math.sqrt(dx*dx + dy*dy);
+    const speed = 12;
+    const vx = (dx/len) * speed;
+    const vy = (dy/len) * speed;
+    const bullet = Bodies.circle(shooterPos.x, shooterPos.y, 10, {
+      restitution: 0.2, friction: 0.05, label: 'bullet', plugin: { char }
+    });
+    World.add(world, bullet);
+    let bulletEl = document.createElement('span');
+    bulletEl.className = 'matter-bullet';
+    bulletEl.textContent = char;
+    bulletEl.style.fontSize = '1.2rem';
+    bulletEl.style.zIndex = '9999';
+    bulletEl.style.position = 'fixed';
+    document.body.appendChild(bulletEl);
+    bulletEl._matterBody = bullet;
+    Body.setVelocity(bullet, { x: vx, y: vy });
+  }
+
+  // 攔截射擊事件（例如按下 a-z, 0-9, 符號）
+  window.addEventListener('keydown', e => {
+    if (currentMode === 'shooting' && e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      shootText(e.key);
+      e.preventDefault();
+    }
+  });
+
+  // 子彈碰撞到目標框時停止並觸發攻擊
+  Events.on(engine, 'collisionStart', function(event) {
+    event.pairs.forEach(pair => {
+      let bullet, target;
+      if (pair.bodyA.label === 'bullet' && pair.bodyB.label === 'target') {
+        bullet = pair.bodyA; target = pair.bodyB;
+      } else if (pair.bodyB.label === 'bullet' && pair.bodyA.label === 'target') {
+        bullet = pair.bodyB; target = pair.bodyA;
+      }
+      if (bullet && target && target.plugin && target.plugin.hp > 0) {
+        target.plugin.hp--;
+        if (target.plugin.hp <= 0) {
+          releaseElementText(target.plugin.el, target.position.x, target.position.y);
+          World.remove(world, target);
+          if (target.plugin.el) target.plugin.el.remove();
+        }
+        // 停止子彈
+        World.remove(world, bullet);
+        document.querySelectorAll('.matter-bullet').forEach(el => {
+          if (el._matterBody === bullet) el.remove();
+        });
+      }
+    });
+  });
 
   // TODO: 炸彈釋放、碰撞、爆炸、掉落等進階互動
 }
