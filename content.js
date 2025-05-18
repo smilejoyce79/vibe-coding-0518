@@ -164,20 +164,17 @@ function initializeMatterPlugin() {
   window.addEventListener('mousedown', (e) => {
     if (e.button === 0) {
       mouseDown = true;
-      console.log(`mousedown 事件觸發，mouseDown: ${mouseDown}`); // 偵錯日誌
     }
   });
 
   window.addEventListener('mousemove', (e) => {
     mouseX = e.clientX;
     mouseY = e.clientY;
-    console.log(`mousemove 事件觸發，mouseX: ${mouseX}, mouseY: ${mouseY}`); // 偵錯日誌
   });
 
   window.addEventListener('mouseup', (e) => {
     if (e.button === 0) {
       mouseDown = false;
-      console.log(`mouseup 事件觸發，mouseDown: ${mouseDown}`); // 偵錯日誌
     }
   });
 
@@ -187,7 +184,6 @@ function initializeMatterPlugin() {
       // 直接將射擊體位置設定為滑鼠位置
       shooterX = mouseX;
       shooterY = mouseY;
-      console.log(`setInterval 更新射擊體位置，shooterX: ${shooterX}, shooterY: ${shooterY}`); // 偵錯日誌
     }
   }, 1000 / 60); // 每秒更新 60 次
 
@@ -226,7 +222,11 @@ function initializeMatterPlugin() {
   }
 
   // 攔截鍵盤射擊
-  window.addEventListener('keydown', handleKeyDown);
+  // 攔截鍵盤射擊
+  window.addEventListener('keydown', e => {
+    // 根據按下的鍵觸發射擊
+    shootText(e.key);
+  });
 
   // 子彈碰撞到目標框時處理
   Events.on(engine, 'collisionStart', function(event) {
