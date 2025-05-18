@@ -1,0 +1,18 @@
+{
+  "manifest_version": 3,
+  "name": "Text Attacker",
+  "description": "一個可以和頁面文字互動的有趣擴充功能",
+  "version": "1.0",
+  "action": {},
+  "permissions": [
+    "activeTab"
+  ],
+  "content_scripts": [{
+    "matches": ["<all_urls>"],
+    "css": ["styles.css"],
+    "js": ["content.js"]
+  }],
+  "background": {
+    "service_worker": "background.js"
+  }
+}
