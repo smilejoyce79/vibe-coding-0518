@@ -179,13 +179,16 @@ function initializeMatterPlugin() {
   });
 
   // 定時更新射擊體位置以跟隨滑鼠
+  // 定時更新射擊體位置以跟隨滑鼠 (相對於文件)
   setInterval(() => {
     if (mouseDown) {
-      // 計算從射擊體中心到滑鼠位置的向量
+      // 計算從射擊體中心到滑鼠位置的向量 (滑鼠位置是視口座標，需要加上捲動偏移量轉換為文件座標)
       const shooterCenterX = shooterX + shooterElement.offsetWidth / 2;
       const shooterCenterY = shooterY + shooterElement.offsetHeight / 2;
-      const dx = mouseX - shooterCenterX;
-      const dy = mouseY - shooterCenterY;
+      const targetMouseX = mouseX + window.scrollX;
+      const targetMouseY = mouseY + window.scrollY;
+      const dx = targetMouseX - shooterCenterX;
+      const dy = targetMouseY - shooterCenterY;
       const len = Math.sqrt(dx * dx + dy * dy);
 
       const threshold = 1; // 很小的閾值
@@ -197,13 +200,18 @@ function initializeMatterPlugin() {
         const dirX = dx / len;
         const dirY = dy / len;
 
-        // 更新射擊體位置 (左上角座標)
+        // 更新射擊體位置 (左上角座標，文件座標)
         shooterX += dirX * moveDistance;
         shooterY += dirY * moveDistance;
       } else {
-        // 如果非常接近，直接設定位置對齊滑鼠中心
-        shooterX = mouseX - shooterElement.offsetWidth / 2;
-        shooterY = mouseY - shooterElement.offsetHeight / 2;
+        // 如果非常接近，直接設定位置對齊滑鼠中心 (文件座標)
+        shooterX = targetMouseX - shooterElement.offsetWidth / 2;
+        shooterY = targetMouseY - shooterElement.offsetHeight / 2;
+      }
+      // 同步 DOM 元素位置
+      if (shooterElement && shooterElement.parentElement) {
+          shooterElement.style.left = shooterX + 'px';
+          shooterElement.style.top = shooterY + 'px';
       }
     }
   }, 1000 / 60); // 每秒更新 60 次
@@ -211,9 +219,11 @@ function initializeMatterPlugin() {
   // 射擊文字功能
   function shootText(char) {
     console.log(`shootText 函式被呼叫，字元: ${char}`); // 偵錯日誌
-    // 使用滑鼠的當前位置計算方向
-    const dx = mouseX - (shooterX+12);
-    const dy = mouseY - (shooterY+12);
+    // 使用滑鼠的當前位置計算方向 (滑鼠位置是視口座標，需要加上捲動偏移量轉換為文件座標)
+    const targetMouseX = mouseX + window.scrollX;
+    const targetMouseY = mouseY + window.scrollY;
+    const dx = targetMouseX - (shooterX + shooterElement.offsetWidth / 2); // 使用射擊體中心的文件座標
+    const dy = targetMouseY - (shooterY + shooterElement.offsetHeight / 2); // 使用射擊體中心的文件座標
     const len = Math.sqrt(dx*dx + dy*dy);
     const speed = 12;
     let vx = 0, vy = 0;
@@ -222,7 +232,8 @@ function initializeMatterPlugin() {
         vy = (dy/len) * speed;
     }
 
-    const bullet = Bodies.circle(shooterX+12, shooterY+12, 12, {
+    // 子彈的初始位置應該是射擊體中心的文件座標
+    const bullet = Bodies.circle(shooterX + shooterElement.offsetWidth / 2, shooterY + shooterElement.offsetHeight / 2, 12, {
       restitution: 0.2, friction: 0.05, label: 'bullet', plugin: { char }
     });
     World.add(world, bullet);
@@ -252,48 +263,49 @@ function initializeMatterPlugin() {
   // 子彈和追蹤物體碰撞到目標框時處理
   Events.on(engine, 'collisionStart', function(event) {
     event.pairs.forEach(pair => {
-      console.log('檢測到碰撞事件'); // 偵錯日誌
-      let projectile = null; // 可以是子彈或追蹤物體
-      let target = null;
+      // console.log('檢測到碰撞事件'); // 偵錯日誌
+      let bodyA = pair.bodyA;
+      let bodyB = pair.bodyB;
 
       // 檢查是否是子彈與目標的碰撞
-      if (pair.bodyA.label === 'bullet' && pair.bodyB.label === 'target') {
-        projectile = pair.bodyA;
-        target = pair.bodyB;
-      } else if (pair.bodyB.label === 'bullet' && pair.bodyA.label === 'target') {
-        projectile = pair.bodyB;
-        target = pair.bodyA;
-      }
+      if ((bodyA.label === 'bullet' && bodyB.label === 'target') || (bodyB.label === 'bullet' && bodyA.label === 'target')) {
+        let projectile = bodyA.label === 'bullet' ? bodyA : bodyB;
+        let target = bodyA.label === 'target' ? bodyA : bodyB;
 
-      if (projectile && target) {
-        console.log(`物體 (${projectile.label}) 與目標 (${target.label}) 發生碰撞`); // 偵錯日誌
+        // console.log(`物體 (${projectile.label}) 與目標 (${target.label}) 發生碰撞`); // 偵錯日誌
         // 移除物體的 Matter body 和 DOM 元素
         World.remove(world, projectile);
-        console.log(`${projectile.label} Matter body 已移除`); // 偵錯日誌
+        // console.log(`${projectile.label} Matter body 已移除`); // 偵錯日誌
         if (projectile.domElement && projectile.domElement.parentElement) {
           projectile.domElement.remove();
-          console.log(`${projectile.label} DOM 元素已移除`); // 偵錯日誌
+          // console.log(`${projectile.label} DOM 元素已移除`); // 偵錯日誌
         }
 
         // 目標框生命值-1
         if (target.plugin && target.plugin.hp !== undefined) {
-          console.log(`目標 ${target.label} 碰撞前生命值: ${target.plugin.hp}`); // 偵錯日誌
+          // console.log(`目標 ${target.label} 碰撞前生命值: ${target.plugin.hp}`); // 偵錯日誌
           target.plugin.hp--;
-          console.log(`目標 ${target.label} 碰撞後剩餘生命值: ${target.plugin.hp}`); // 偵錯日誌
+          // console.log(`目標 ${target.label} 碰撞後剩餘生命值: ${target.plugin.hp}`); // 偵錯日誌
           if (target.plugin.hp <= 0) {
-            console.log(`目標 ${target.label} 生命值歸零，觸發文字釋放`); // 偵錯日誌
-            // 觸發文字釋放效果 (Matter.js 會在 afterUpdate 中處理 fallingChar 的 DOM 同步)
-            // 這裡只需要確保 Matter body 被移除，文字釋放邏輯已在 addCharToPhysicsWorld 中處理
-            console.log('目標生命值歸零，Matter body 將被移除'); // 偵錯日誌
+            console.log(`目標 ${target.label} 生命值歸零，觸發文字分解`); // 偵錯日誌
             // 從 Matter.js 世界中移除目標 body
             World.remove(world, target);
             console.log('目標 Matter body 已移除'); // 偵錯日誌
-            // 從 DOM 中移除目標元素 (triggerParentCollapse 已經處理)
-            // if (target.plugin.el && target.plugin.el.parentElement) {
-            //     target.plugin.el.remove();
-            // }
+            // 觸發文字分解和物理效果
+            breakDownTargetText(target);
           }
         }
+      }
+
+      // 檢查是否是掉落文字與地板的碰撞
+      if ((bodyA.label === 'fallingChar' && bodyB === ground) || (bodyB.label === 'fallingChar' && bodyA === ground)) {
+          let fallingCharBody = bodyA.label === 'fallingChar' ? bodyA : bodyB;
+          // console.log(`掉落文字 (${fallingCharBody.label}) 與地板發生碰撞`); // 偵錯日誌
+          // 標記為已落地並記錄時間
+          if (!fallingCharBody.landedAt) {
+              fallingCharBody.landedAt = Date.now();
+              // console.log(`掉落文字已標記落地時間: ${fallingCharBody.landedAt}`); // 偵錯日誌
+          }
       }
     });
   });
@@ -338,6 +350,8 @@ function initializeMatterPlugin() {
   // Matter.js Events: 每次更新後處理掉落文字、子彈和追蹤物體的移除以及 DOM 同步和追蹤邏輯
   Events.on(engine, 'afterUpdate', function() {
       const bodiesToRemove = [];
+      const currentTime = Date.now();
+      const removalDelay = 1000; // 1 秒延遲
 
       Matter.Composite.allBodies(engine.world).forEach(body => {
           // 檢查是否是掉落文字或炸彈文字，並且超出視口
@@ -356,6 +370,17 @@ function initializeMatterPlugin() {
                     body.domElement.remove();
                }
           }
+
+          // 檢查是否是已落地的掉落文字，並且已超過移除延遲
+          if ((body.label === 'fallingChar' || body.label === 'bombChar') && body.landedAt && (currentTime - body.landedAt > removalDelay)) {
+              // console.log(`掉落文字已落地超過 ${removalDelay}ms，準備移除`); // 偵錯日誌
+              bodiesToRemove.push(body);
+              // 移除對應的 DOM 元素
+              if (body.domElement && body.domElement.parentElement) {
+                  body.domElement.remove();
+                  // console.log('掉落文字 DOM 元素已移除'); // 偵錯日誌
+              }
+          }
       });
 
       // 從世界中移除標記的 body
@@ -365,15 +390,15 @@ function initializeMatterPlugin() {
       // Composite.allBodies(world).forEach(body => {
       //   // Only sync bodies that have a DOM element and are not static (static elements' DOM position is handled once)
       //   if (body.isStatic || !body.plugin || !body.plugin.el || !body.plugin.el.parentElement) return;
-
+      //
       //   const el = body.plugin.el;
       //   const pos = body.position;
       //   const angle = body.angle;
-
+      //
       //   // Calculate fixed position relative to the viewport
       //   const fixedX = pos.x - window.scrollX - (el.offsetWidth / 2);
       //   const fixedY = pos.y - window.scrollY - (el.offsetHeight / 2);
-
+      //
       //   el.style.position = 'fixed'; // Ensure fixed position
       //   el.style.left = fixedX + 'px';
       //   el.style.top = fixedY + 'px';
@@ -389,17 +414,14 @@ function initializeMatterPlugin() {
           Matter.Body.setPosition(ground, { x: ground.position.x, y: targetGroundY });
       }
 
-      // 同步射擊體 DOM 位置 (始終固定)
-      // 使用全域的 shooterElement 變數
-      if (shooterElement && shooterElement.parentElement) {
-        // shooterX/Y 已經是視口相對位置，直接設定 left 和 top
-        // shooterX/Y 是中心點座標，需要減去元素寬高的一半來設定 left/top
-        const calculatedLeft = shooterX + 'px';
-        const calculatedTop = shooterY + 'px';
-        shooterElement.style.left = calculatedLeft;
-        shooterElement.style.top = calculatedTop;
-        console.log(`afterUpdate 同步 shooterElement 位置，shooterElement 存在: ${!!shooterElement}，計算出的 left: ${calculatedLeft}, top: ${calculatedTop}`); // 偵錯日誌
-      }
+      // 移除射擊體 DOM 位置同步，已在 setInterval 中處理
+      // if (shooterElement && shooterElement.parentElement) {
+      //   const calculatedLeft = shooterX + 'px';
+      //   const calculatedTop = shooterY + 'px';
+      //   shooterElement.style.left = calculatedLeft;
+      //   shooterElement.style.top = calculatedTop;
+      //   console.log(`afterUpdate 同步 shooterElement 位置，shooterElement 存在: ${!!shooterElement}，計算出的 left: ${calculatedLeft}, top: ${calculatedTop}`); // 偵錯日誌
+      // }
       // 地板 DOM 元素也是固定的，無需同步其 Matter body 位置
 
   });
@@ -448,7 +470,7 @@ function injectUI() {
   shooterElement = document.createElement('div');
   shooterElement.id = 'shooter';
   // 設定基本樣式，與 Matter.js 中的 shooterEl 樣式一致
-  shooterElement.style.position = 'fixed';
+  shooterElement.style.position = 'absolute';
   shooterElement.style.width = '24px';
   shooterElement.style.height = '24px';
   shooterElement.style.background = '#888';
@@ -637,6 +659,45 @@ function updateModeIcons() {
 // 觸發父容器崩解效果 (此函式名稱與需求中的 releaseElementText 不同，但功能相似，將進行修改以符合需求)
 
 // 將單一字元 span 加入 Matter.js 世界
+// 處理目標文字分解並應用物理效果
+function breakDownTargetText(targetBody) {
+  const targetElement = targetBody.domElement;
+  if (!targetElement || !targetElement.parentElement) {
+    console.warn('無法找到目標元素的 DOM 元素或其父元素');
+    return;
+  }
+
+  const textContent = targetElement.textContent;
+  const rect = targetElement.getBoundingClientRect();
+  const originalX = rect.left + window.scrollX;
+  const originalY = rect.top + window.scrollY;
+
+  // 移除原始 DOM 元素
+  targetElement.remove();
+  console.log('原始目標 DOM 元素已移除'); // 偵錯日誌
+
+  // 為每個字元創建新的 span 元素並應用物理效果
+  for (let i = 0; i < textContent.length; i++) {
+    const char = textContent[i];
+    if (char.trim() === '') continue; // 忽略空白字元
+
+    const charElement = document.createElement('span');
+    charElement.textContent = char;
+    charElement.className = 'falling-char'; // 添加 class 以便樣式控制
+    charElement.style.position = 'absolute'; // 使用 absolute 定位以便 Matter.js 控制
+    charElement.style.left = `${originalX + i * 10}px`; // 簡單估計每個字元的位置
+    charElement.style.top = `${originalY}px`;
+    charElement.style.whiteSpace = 'pre'; // 保留空白字元（如果未忽略）
+    charElement.style.pointerEvents = 'none'; // 避免干擾滑鼠事件
+    charElement.style.zIndex = '9999'; // 確保在最上層
+
+    document.body.appendChild(charElement);
+
+    // 將字元元素加入 Matter.js 世界
+    addCharToPhysicsWorld(charElement, originalX + i * 10, originalY); // 使用估計位置
+  }
+  console.log(`已將文字分解為 ${textContent.length} 個字元並加入物理世界`); // 偵錯日誌
+}
 function addCharToPhysicsWorld(charElement, x, y) {
   if (!window.Matter || !window._matterReady || !window._matterEngine) return;
   const { Bodies, World, Body } = window.Matter;
