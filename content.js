@@ -23,6 +23,10 @@ let fallingElements = []; // 儲存正在掉落的元素及其物理狀態
 let lastMouseX = 0;
 let lastMouseY = 0;
 
+let isDraggingShooter = false;
+let dragOffsetX = 0;
+let dragOffsetY = 0;
+
 // 初始化插件
 function initializePlugin() {
   console.log('插件已啟動');
@@ -69,15 +73,32 @@ function injectUI() {
 
 // 掃描 DOM 並識別目標元素
 function identifyTargetElements() {
-  // 遍歷頁面上的 <p>, <h2>, <h3>, <img> 元素
-  const targetElements = document.querySelectorAll('p, h2, h3, img');
-  targetElements.forEach(element => {
-    // 為可射擊元素添加標記或事件監聽器
-    // 對於文本元素，可能需要將文字包裹在 <span> 中
-    // 為可射擊元素添加標記或事件監聽器
-    // 對於文本元素，可能需要將文字包裹在 <span> 中
-    // 暫時不添加點擊事件，射擊將由鍵盤觸發並通過碰撞檢測確定目標
-    // element.addEventListener('click', handleShooting); // 移除此行
+  // 遍歷所有元素（不只是特定標籤）
+  const allElements = document.querySelectorAll('*');
+  allElements.forEach(element => {
+    // 跳過 script, style, link, meta, head, title, noscript 等不應包裹的元素
+    if ([
+      'SCRIPT', 'STYLE', 'LINK', 'META', 'HEAD', 'TITLE', 'NOSCRIPT', 'IFRAME', 'SVG', 'CANVAS', 'IMG', 'VIDEO', 'AUDIO', 'SOURCE', 'TRACK', 'BR', 'HR', 'INPUT', 'TEXTAREA', 'BUTTON', 'SELECT', 'OPTION', 'DATALIST', 'OBJECT', 'EMBED', 'PARAM', 'BASE', 'COL', 'COLGROUP', 'FRAME', 'FRAMESET', 'MAP', 'AREA', 'TBODY', 'THEAD', 'TFOOT', 'TR', 'TH', 'TD' 
+    ].includes(element.tagName)) return;
+    // 將每個文字節點包裹在 <span class="shootable-text">
+    const childNodes = Array.from(element.childNodes);
+    childNodes.forEach(node => {
+      if (node.nodeType === Node.TEXT_NODE && node.textContent.trim() !== '') {
+        const text = node.textContent;
+        const frag = document.createDocumentFragment();
+        for (let char of text) {
+          const span = document.createElement('span');
+          span.textContent = char;
+          span.className = 'shootable-text';
+          frag.appendChild(span);
+        }
+        element.replaceChild(frag, node);
+      }
+    });
+  });
+  // 監聽 shootable-text 點擊事件
+  document.querySelectorAll('.shootable-text').forEach(span => {
+    span.addEventListener('click', handleShootableTextClick);
   });
 }
 
@@ -96,8 +117,11 @@ function setupEventListeners() {
 // 處理滑鼠按下事件 (用於射擊物控制)
 function handleMouseDown(event) {
   if (currentMode === 'shooting' && event.target === shooterElement) {
-    // 開始拖曳射擊物
-    // 記錄起始點和射擊物的初始位置
+    isDraggingShooter = true;
+    const rect = shooterElement.getBoundingClientRect();
+    dragOffsetX = event.clientX - rect.left;
+    dragOffsetY = event.clientY - rect.top;
+    event.preventDefault();
   }
 }
 
@@ -105,17 +129,16 @@ function handleMouseDown(event) {
 function handleMouseMove(event) {
   lastMouseX = event.clientX;
   lastMouseY = event.clientY;
-  // 更新射擊物 (shooterElement) 的位置以跟隨滑鼠
-  if (shooterElement) {
-    shooterElement.style.left = `${lastMouseX}px`;
-    shooterElement.style.top = `${lastMouseY}px`;
+  if (isDraggingShooter && shooterElement) {
+    shooterElement.style.left = `${event.clientX - dragOffsetX + window.scrollX}px`;
+    shooterElement.style.top = `${event.clientY - dragOffsetY + window.scrollY}px`;
   }
 }
 
 // 處理滑鼠釋放事件 (用於射擊物控制)
 function handleMouseUp(event) {
-  if (currentMode === 'shooting' && /* 結束拖曳射擊物 */ true) {
-    // 停止拖曳狀態
+  if (isDraggingShooter) {
+    isDraggingShooter = false;
   }
 }
 
@@ -376,6 +399,72 @@ function exitPlugin() {
 
   // 停止物理模擬循環 (如果需要)
   // 清理其他狀態
+}
+
+function handleShootableTextClick(event) {
+  if (currentMode !== 'shooting') return;
+  event.stopPropagation();
+  const targetSpan = event.target;
+  // 取得目標位置
+  const rect = targetSpan.getBoundingClientRect();
+  const targetX = rect.left + rect.width / 2 + window.scrollX;
+  const targetY = rect.top + rect.height / 2 + window.scrollY;
+  // 取得射擊物位置
+  const shooterRect = shooterElement.getBoundingClientRect();
+  const shooterX = shooterRect.left + shooterRect.width / 2 + window.scrollX;
+  const shooterY = shooterRect.top + shooterRect.height / 2 + window.scrollY;
+  // 產生飛行文字
+  shootFlyingText(targetSpan.textContent, shooterX, shooterY, targetX, targetY);
+}
+
+function shootFlyingText(char, fromX, fromY, toX, toY) {
+  const span = document.createElement('span');
+  span.textContent = char;
+  span.className = 'flying-text';
+  span.style.position = 'absolute';
+  span.style.left = `${fromX}px`;
+  span.style.top = `${fromY}px`;
+  span.style.pointerEvents = 'none';
+  span.style.zIndex = '9999';
+  document.body.appendChild(span);
+  // 計算飛行向量
+  const dx = toX - fromX;
+  const dy = toY - fromY;
+  const steps = 30;
+  let step = 0;
+  function animate() {
+    step++;
+    const progress = step / steps;
+    // 線性插值
+    span.style.left = `${fromX + dx * progress}px`;
+    span.style.top = `${fromY + dy * progress}px`;
+    if (step < steps) {
+      requestAnimationFrame(animate);
+    } else {
+      // 到達目標後掉落
+      startFallingText(span, toX, toY);
+    }
+  }
+  animate();
+}
+
+function startFallingText(span, startX, startY) {
+  let x = startX;
+  let y = startY;
+  let vy = 0;
+  const gravity = 0.8;
+  function fall() {
+    vy += gravity;
+    y += vy;
+    span.style.left = `${x}px`;
+    span.style.top = `${y}px`;
+    if (y < window.innerHeight) {
+      requestAnimationFrame(fall);
+    } else {
+      span.remove();
+    }
+  }
+  fall();
 }
 
 // 插件啟動時執行初始化
