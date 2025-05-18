@@ -145,7 +145,7 @@ function initializeMatterPlugin() {
   document.querySelectorAll('p, h2, h3, div').forEach(el => {
     if (!el.classList.contains('matter-target') && el.offsetHeight > 20 && el.offsetWidth > 40) {
       el.classList.add('matter-target');
-      el.style.outline = '2px dashed #0af';
+//      el.style.outline = '2px dashed #0af'; // 隱藏用於辨識文字障礙物的藍色虛線
     }
   });
 
@@ -179,13 +179,16 @@ function initializeMatterPlugin() {
   });
 
   // 定時更新射擊體位置以跟隨滑鼠
+  // 定時更新射擊體位置以跟隨滑鼠 (相對於文件)
   setInterval(() => {
     if (mouseDown) {
-      // 計算從射擊體中心到滑鼠位置的向量
+      // 計算從射擊體中心到滑鼠位置的向量 (滑鼠位置是視口座標，需要加上捲動偏移量轉換為文件座標)
       const shooterCenterX = shooterX + shooterElement.offsetWidth / 2;
       const shooterCenterY = shooterY + shooterElement.offsetHeight / 2;
-      const dx = mouseX - shooterCenterX;
-      const dy = mouseY - shooterCenterY;
+      const targetMouseX = mouseX + window.scrollX;
+      const targetMouseY = mouseY + window.scrollY;
+      const dx = targetMouseX - shooterCenterX;
+      const dy = targetMouseY - shooterCenterY;
       const len = Math.sqrt(dx * dx + dy * dy);
 
       const threshold = 1; // 很小的閾值
@@ -197,13 +200,18 @@ function initializeMatterPlugin() {
         const dirX = dx / len;
         const dirY = dy / len;
 
-        // 更新射擊體位置 (左上角座標)
+        // 更新射擊體位置 (左上角座標，文件座標)
         shooterX += dirX * moveDistance;
         shooterY += dirY * moveDistance;
       } else {
-        // 如果非常接近，直接設定位置對齊滑鼠中心
-        shooterX = mouseX - shooterElement.offsetWidth / 2;
-        shooterY = mouseY - shooterElement.offsetHeight / 2;
+        // 如果非常接近，直接設定位置對齊滑鼠中心 (文件座標)
+        shooterX = targetMouseX - shooterElement.offsetWidth / 2;
+        shooterY = targetMouseY - shooterElement.offsetHeight / 2;
+      }
+      // 同步 DOM 元素位置
+      if (shooterElement && shooterElement.parentElement) {
+          shooterElement.style.left = shooterX + 'px';
+          shooterElement.style.top = shooterY + 'px';
       }
     }
   }, 1000 / 60); // 每秒更新 60 次
@@ -211,9 +219,11 @@ function initializeMatterPlugin() {
   // 射擊文字功能
   function shootText(char) {
     console.log(`shootText 函式被呼叫，字元: ${char}`); // 偵錯日誌
-    // 使用滑鼠的當前位置計算方向
-    const dx = mouseX - (shooterX+12);
-    const dy = mouseY - (shooterY+12);
+    // 使用滑鼠的當前位置計算方向 (滑鼠位置是視口座標，需要加上捲動偏移量轉換為文件座標)
+    const targetMouseX = mouseX + window.scrollX;
+    const targetMouseY = mouseY + window.scrollY;
+    const dx = targetMouseX - (shooterX + shooterElement.offsetWidth / 2); // 使用射擊體中心的文件座標
+    const dy = targetMouseY - (shooterY + shooterElement.offsetHeight / 2); // 使用射擊體中心的文件座標
     const len = Math.sqrt(dx*dx + dy*dy);
     const speed = 12;
     let vx = 0, vy = 0;
@@ -222,7 +232,8 @@ function initializeMatterPlugin() {
         vy = (dy/len) * speed;
     }
 
-    const bullet = Bodies.circle(shooterX+12, shooterY+12, 12, {
+    // 子彈的初始位置應該是射擊體中心的文件座標
+    const bullet = Bodies.circle(shooterX + shooterElement.offsetWidth / 2, shooterY + shooterElement.offsetHeight / 2, 12, {
       restitution: 0.2, friction: 0.05, label: 'bullet', plugin: { char }
     });
     World.add(world, bullet);
@@ -403,17 +414,14 @@ function initializeMatterPlugin() {
           Matter.Body.setPosition(ground, { x: ground.position.x, y: targetGroundY });
       }
 
-      // 同步射擊體 DOM 位置 (始終固定)
-      // 使用全域的 shooterElement 變數
-      if (shooterElement && shooterElement.parentElement) {
-        // shooterX/Y 已經是視口相對位置，直接設定 left 和 top
-        // shooterX/Y 是中心點座標，需要減去元素寬高的一半來設定 left/top
-        const calculatedLeft = shooterX + 'px';
-        const calculatedTop = shooterY + 'px';
-        shooterElement.style.left = calculatedLeft;
-        shooterElement.style.top = calculatedTop;
-        console.log(`afterUpdate 同步 shooterElement 位置，shooterElement 存在: ${!!shooterElement}，計算出的 left: ${calculatedLeft}, top: ${calculatedTop}`); // 偵錯日誌
-      }
+      // 移除射擊體 DOM 位置同步，已在 setInterval 中處理
+      // if (shooterElement && shooterElement.parentElement) {
+      //   const calculatedLeft = shooterX + 'px';
+      //   const calculatedTop = shooterY + 'px';
+      //   shooterElement.style.left = calculatedLeft;
+      //   shooterElement.style.top = calculatedTop;
+      //   console.log(`afterUpdate 同步 shooterElement 位置，shooterElement 存在: ${!!shooterElement}，計算出的 left: ${calculatedLeft}, top: ${calculatedTop}`); // 偵錯日誌
+      // }
       // 地板 DOM 元素也是固定的，無需同步其 Matter body 位置
 
   });
@@ -462,7 +470,7 @@ function injectUI() {
   shooterElement = document.createElement('div');
   shooterElement.id = 'shooter';
   // 設定基本樣式，與 Matter.js 中的 shooterEl 樣式一致
-  shooterElement.style.position = 'fixed';
+  shooterElement.style.position = 'absolute';
   shooterElement.style.width = '24px';
   shooterElement.style.height = '24px';
   shooterElement.style.background = '#888';
