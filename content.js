@@ -145,7 +145,7 @@ function initializeMatterPlugin() {
   document.querySelectorAll('p, h2, h3, div').forEach(el => {
     if (!el.classList.contains('matter-target') && el.offsetHeight > 20 && el.offsetWidth > 40) {
       el.classList.add('matter-target');
-      el.style.outline = '2px dashed #0af';
+//      el.style.outline = '2px dashed #0af'; // 隱藏用於辨識文字障礙物的藍色虛線
     }
   });
 
