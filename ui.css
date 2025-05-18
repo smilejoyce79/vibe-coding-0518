@@ -1,0 +1,58 @@
+/* 在這裡添加插件 UI 的樣式 */
+
+#shooter {
+    position: fixed;
+    width: 50px;
+    height: 50px;
+    background-color: blue; /* 暫時的顏色 */
+    border-radius: 50%;
+    pointer-events: none; /* 確保不會阻擋頁面元素的點擊 */
+    z-index: 10000; /* 確保在最上層 */
+}
+
+#control-panel {
+    position: fixed;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    background-color: rgba(0, 0, 0, 0.7); /* 調整背景透明度 */
+    color: white;
+    padding: 10px 20px; /* 調整內邊距 */
+    border-radius: 20px; /* 調整圓角 */
+    z-index: 10000;
+    cursor: pointer;
+    display: flex; /* 使用 flexbox 佈局圖標 */
+    align-items: center;
+    justify-content: center;
+}
+
+#control-panel .mode-icon {
+    margin: 0 10px;
+    cursor: pointer;
+    font-size: 24px; /* 調整圖標大小 */
+    opacity: 0.5; /* 未選中模式的透明度 */
+    transition: opacity 0.3s ease;
+}
+
+#control-panel .mode-icon.active {
+    opacity: 1; /* 選中模式的不透明度 */
+}
+
+#bomb-counter {
+    position: fixed;
+    top: 20px;
+    left: 20px;
+    background-color: rgba(0, 0, 0, 0.7); /* 調整背景透明度 */
+    color: white;
+    padding: 8px 12px; /* 調整內邊距 */
+    border-radius: 15px; /* 調整圓角 */
+    z-index: 10000;
+    font-size: 18px; /* 調整字體大小 */
+}
+
+.falling-text {
+    position: fixed;
+    pointer-events: none;
+    z-index: 9999;
+    white-space: nowrap; /* 防止文字換行 */
+}

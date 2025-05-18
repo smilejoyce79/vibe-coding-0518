@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "解壓射擊與炸彈",
+  "version": "1.0",
+  "description": "一個有趣的 Google 插件，包含射擊和炸彈模式，用於網頁互動和解壓。",
+  "permissions": [
+    "activeTab",
+    "storage",
+    "scripting"
+  ],
+  "action": {
+    "default_popup": ""
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "css": ["ui.css"]
+    }
+  ]
+}
