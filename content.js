@@ -23,6 +23,14 @@ let fallingElements = []; // 儲存正在掉落的元素及其物理狀態
 let lastMouseX = 0;
 let lastMouseY = 0;
 
+let isDraggingShooter = false;
+let dragStartX = 0;
+let dragStartY = 0;
+let shooterVX = 0;
+let shooterVY = 0;
+let shooterMoveInterval = null;
+let shooterFriction = 0.95; // 慣性摩擦力
+
 // 初始化插件
 function initializePlugin() {
   console.log('插件已啟動');
@@ -46,10 +54,10 @@ function injectUI() {
   // 創建控制面板 (包含模式切換圖標)
   controlPanelElement = document.createElement('div');
   controlPanelElement.id = 'control-panel';
-  // 添加槍和手榴彈圖標 (這裡先用文字代替，後續替換為圖片)
+  // 使用 emoji 作為圖標
   controlPanelElement.innerHTML = `
-    <span id="shooting-mode-icon">槍</span>
-    <span id="bomb-mode-icon">手榴彈</span>
+    <span id="shooting-mode-icon" class="mode-icon">🔫</span>
+    <span id="bomb-mode-icon" class="mode-icon">💣</span>
   `;
   document.body.appendChild(controlPanelElement);
 
@@ -69,15 +77,32 @@ function injectUI() {
 
 // 掃描 DOM 並識別目標元素
 function identifyTargetElements() {
-  // 遍歷頁面上的 <p>, <h2>, <h3>, <img> 元素
-  const targetElements = document.querySelectorAll('p, h2, h3, img');
-  targetElements.forEach(element => {
-    // 為可射擊元素添加標記或事件監聽器
-    // 對於文本元素，可能需要將文字包裹在 <span> 中
-    // 為可射擊元素添加標記或事件監聽器
-    // 對於文本元素，可能需要將文字包裹在 <span> 中
-    // 暫時不添加點擊事件，射擊將由鍵盤觸發並通過碰撞檢測確定目標
-    // element.addEventListener('click', handleShooting); // 移除此行
+  // 遍歷所有元素（不只是特定標籤）
+  const allElements = document.querySelectorAll('*');
+  allElements.forEach(element => {
+    // 跳過 script, style, link, meta, head, title, noscript 等不應包裹的元素
+    if ([
+      'SCRIPT', 'STYLE', 'LINK', 'META', 'HEAD', 'TITLE', 'NOSCRIPT', 'IFRAME', 'SVG', 'CANVAS', 'IMG', 'VIDEO', 'AUDIO', 'SOURCE', 'TRACK', 'BR', 'HR', 'INPUT', 'TEXTAREA', 'BUTTON', 'SELECT', 'OPTION', 'DATALIST', 'OBJECT', 'EMBED', 'PARAM', 'BASE', 'COL', 'COLGROUP', 'FRAME', 'FRAMESET', 'MAP', 'AREA', 'TBODY', 'THEAD', 'TFOOT', 'TR', 'TH', 'TD' 
+    ].includes(element.tagName)) return;
+    // 將每個文字節點包裹在 <span class="shootable-text">
+    const childNodes = Array.from(element.childNodes);
+    childNodes.forEach(node => {
+      if (node.nodeType === Node.TEXT_NODE && node.textContent.trim() !== '') {
+        const text = node.textContent;
+        const frag = document.createDocumentFragment();
+        for (let char of text) {
+          const span = document.createElement('span');
+          span.textContent = char;
+          span.className = 'shootable-text';
+          frag.appendChild(span);
+        }
+        element.replaceChild(frag, node);
+      }
+    });
+  });
+  // 監聽 shootable-text 點擊事件
+  document.querySelectorAll('.shootable-text').forEach(span => {
+    span.addEventListener('click', handleShootableTextClick);
   });
 }
 
@@ -95,9 +120,13 @@ function setupEventListeners() {
 
 // 處理滑鼠按下事件 (用於射擊物控制)
 function handleMouseDown(event) {
-  if (currentMode === 'shooting' && event.target === shooterElement) {
-    // 開始拖曳射擊物
-    // 記錄起始點和射擊物的初始位置
+  if (currentMode === 'shooting' && event.button === 0) {
+    isDraggingShooter = true;
+    dragStartX = event.clientX;
+    dragStartY = event.clientY;
+    shooterVX = 0;
+    shooterVY = 0;
+    event.preventDefault();
   }
 }
 
@@ -105,18 +134,75 @@ function handleMouseDown(event) {
 function handleMouseMove(event) {
   lastMouseX = event.clientX;
   lastMouseY = event.clientY;
-  // 更新射擊物 (shooterElement) 的位置以跟隨滑鼠
-  if (shooterElement) {
-    shooterElement.style.left = `${lastMouseX}px`;
-    shooterElement.style.top = `${lastMouseY}px`;
+  if (isDraggingShooter) {
+    // 拖曳方向決定射擊體移動速度
+    const dx = event.clientX - dragStartX;
+    const dy = event.clientY - dragStartY;
+    // 固定速度（可調整）
+    const speed = 6;
+    const len = Math.sqrt(dx*dx + dy*dy);
+    if (len > 5) { // 有明顯拖曳才移動
+      shooterVX = (dx / len) * speed;
+      shooterVY = (dy / len) * speed;
+    } else {
+      shooterVX = 0;
+      shooterVY = 0;
+    }
+    dragStartX = event.clientX;
+    dragStartY = event.clientY;
+    // 啟動移動計時器
+    if (!shooterMoveInterval) {
+      shooterMoveInterval = setInterval(moveShooter, 16);
+    }
   }
 }
 
 // 處理滑鼠釋放事件 (用於射擊物控制)
 function handleMouseUp(event) {
-  if (currentMode === 'shooting' && /* 結束拖曳射擊物 */ true) {
-    // 停止拖曳狀態
+  if (isDraggingShooter) {
+    isDraggingShooter = false;
+    // 拖曳結束後，射擊體繼續以目前速度滑行
+    if (shooterMoveInterval) {
+      clearInterval(shooterMoveInterval);
+      shooterMoveInterval = null;
+    }
+    // 啟動慣性滑行動畫
+    requestAnimationFrame(inertiaMoveShooter);
   }
+}
+
+function inertiaMoveShooter() {
+  if (!shooterElement) return;
+  let left = parseFloat(shooterElement.style.left || 0);
+  let top = parseFloat(shooterElement.style.top || 0);
+  left += shooterVX;
+  top += shooterVY;
+  shooterVX *= shooterFriction;
+  shooterVY *= shooterFriction;
+  // 邊界限制
+  left = Math.max(0, Math.min(window.innerWidth - shooterElement.offsetWidth, left));
+  top = Math.max(0, Math.min(window.innerHeight - shooterElement.offsetHeight, top));
+  shooterElement.style.left = `${left}px`;
+  shooterElement.style.top = `${top}px`;
+  if (Math.abs(shooterVX) > 0.2 || Math.abs(shooterVY) > 0.2) {
+    requestAnimationFrame(inertiaMoveShooter);
+  } else {
+    shooterVX = 0;
+    shooterVY = 0;
+  }
+}
+
+function moveShooter() {
+  if (!shooterElement) return;
+  let left = parseFloat(shooterElement.style.left || 0);
+  let top = parseFloat(shooterElement.style.top || 0);
+  left += shooterVX;
+  top += shooterVY;
+  // 邊界限制
+  left = Math.max(0, Math.min(window.innerWidth - shooterElement.offsetWidth, left));
+  top = Math.max(0, Math.min(window.innerHeight - shooterElement.offsetHeight, top));
+  shooterElement.style.left = `${left}px`;
+  shooterElement.style.top = `${top}px`;
 }
 
 // 處理滑鼠點擊事件 (用於炸彈施放)
@@ -124,8 +210,11 @@ function handleClick(event) {
   if (currentMode === 'bomb') {
     // 檢查炸彈數量
     if (bombTextStorage.length > 0) {
-      // 在點擊位置施放炸彈
-      triggerBombEffect(event.clientX, event.clientY);
+      // 在射擊物位置施放炸彈（炸彈文字從射擊物飛出並四散落下）
+      const shooterRect = shooterElement.getBoundingClientRect();
+      const shooterX = shooterRect.left + shooterRect.width / 2 + window.scrollX;
+      const shooterY = shooterRect.top + shooterRect.height / 2 + window.scrollY;
+      triggerBombEffect(shooterX, shooterY);
       // 重置炸彈文字儲存
       bombTextStorage = [];
       // 更新計數器
@@ -137,12 +226,23 @@ function handleClick(event) {
 // 處理鍵盤按下事件 (用於觸發射擊和結束插件)
 function handleKeyDown(event) {
   if (event.key === 'Escape') {
-    // 按下 ESC 鍵，結束插件
     exitPlugin();
-  } else if (currentMode === 'shooting' && event.key === ' ') { // 按下空白鍵觸發射擊
-    // 在射擊模式下按下空白鍵，觸發射擊
-    triggerShooting(lastMouseX, lastMouseY);
-    event.preventDefault(); // 防止空白鍵滾動頁面
+  } else if (currentMode === 'shooting') {
+    const key = event.key;
+    if (!event.ctrlKey && !event.altKey && !event.metaKey &&
+      !['Shift','Control','Alt','Meta','CapsLock','Tab','Enter','Backspace','ArrowLeft','ArrowRight','ArrowUp','ArrowDown','PageUp','PageDown','Home','End','Insert','Delete','ContextMenu','ScrollLock','Pause','NumLock','PrintScreen'].includes(key)
+      && key.length === 1
+    ) {
+      const shooterRect = shooterElement.getBoundingClientRect();
+      const shooterX = shooterRect.left + shooterRect.width / 2 + window.scrollX;
+      const shooterY = shooterRect.top + shooterRect.height / 2 + window.scrollY;
+      // 射擊方向永遠指向滑鼠游標
+      shootFlyingText(key, shooterX, shooterY, lastMouseX, lastMouseY, () => {
+        bombTextStorage.push(key);
+        updateCounter();
+      });
+      event.preventDefault();
+    }
   }
 }
 
@@ -162,9 +262,17 @@ function updateModeIcons() {
   if (currentMode === 'shooting') {
     shootingIcon.classList.add('active');
     bombIcon.classList.remove('active');
+    shootingIcon.style.fontSize = '2rem';
+    bombIcon.style.fontSize = '1.5rem';
+    shootingIcon.style.filter = 'drop-shadow(0 0 4px #0af)';
+    bombIcon.style.filter = '';
   } else {
     bombIcon.classList.add('active');
     shootingIcon.classList.remove('active');
+    bombIcon.style.fontSize = '2rem';
+    shootingIcon.style.fontSize = '1.5rem';
+    bombIcon.style.filter = 'drop-shadow(0 0 4px #fa0)';
+    shootingIcon.style.filter = '';
   }
 }
 
@@ -294,28 +402,37 @@ function triggerParentCollapse(parentElement) {
 // 觸發炸彈效果
 function triggerBombEffect(x, y) {
   console.log(`在 (${x}, ${y}) 施放炸彈`);
-  // 實現炸彈視覺效果 (使用 bombTextStorage 中的文字)
-  // 例如，創建一些帶有文字的元素並從施放點向外拋出
-
-  bombTextStorage.forEach(text => {
+  // 將 bombTextStorage 內所有字元掉落到螢幕底部
+  let chars = bombTextStorage.join('').split('');
+  const total = chars.length;
+  const spread = Math.min(120, window.innerWidth - 40);
+  chars.forEach((char, i) => {
     const textElement = document.createElement('span');
     textElement.classList.add('falling-text');
-    textElement.textContent = text;
-    textElement.style.left = `${x}px`;
+    textElement.textContent = char;
+    textElement.style.position = 'absolute';
+    // 均勻分布在螢幕上方
+    const tx = 20 + (i * spread / Math.max(1, total - 1));
+    textElement.style.left = `${tx}px`;
     textElement.style.top = `${y}px`;
+    textElement.style.pointerEvents = 'none';
+    textElement.style.zIndex = '1000';
+    textElement.style.fontSize = '2rem';
     document.body.appendChild(textElement);
-
-    // 為每個文字元素添加物理狀態
-    fallingElements.push({
-      element: textElement,
-      x: x,
-      y: y,
-      vx: (Math.random() - 0.5) * 10, // 隨機水平速度
-      vy: (Math.random() - 0.5) * 10, // 隨機垂直速度
-      gravity: 0.5, // 重力加速度
-      alpha: 1, // 透明度
-      fadeSpeed: 0.01 // 淡出速度
-    });
+    // 掉落動畫（不會自動消失）
+    let vy = 0;
+    let posY = y;
+    function fall() {
+      vy += 0.7;
+      posY += vy;
+      textElement.style.top = `${posY}px`;
+      if (posY < window.innerHeight - 40) {
+        requestAnimationFrame(fall);
+      } else {
+        textElement.style.top = `${window.innerHeight - 40}px`;
+      }
+    }
+    fall();
   });
 }
 
@@ -376,6 +493,73 @@ function exitPlugin() {
 
   // 停止物理模擬循環 (如果需要)
   // 清理其他狀態
+}
+
+function handleShootableTextClick(event) {
+  if (currentMode !== 'shooting') return;
+  event.stopPropagation();
+  const targetSpan = event.target;
+  // 取得目標位置
+  const rect = targetSpan.getBoundingClientRect();
+  const targetX = rect.left + rect.width / 2 + window.scrollX;
+  const targetY = rect.top + rect.height / 2 + window.scrollY;
+  // 取得射擊物位置
+  const shooterRect = shooterElement.getBoundingClientRect();
+  const shooterX = shooterRect.left + shooterRect.width / 2 + window.scrollX;
+  const shooterY = shooterRect.top + shooterRect.height / 2 + window.scrollY;
+  // 產生飛行文字
+  shootFlyingText(targetSpan.textContent, shooterX, shooterY, targetX, targetY);
+}
+
+function shootFlyingText(char, fromX, fromY, toX, toY, onHit) {
+  const span = document.createElement('span');
+  span.textContent = char;
+  span.className = 'flying-text';
+  span.style.position = 'absolute';
+  span.style.left = `${fromX}px`;
+  span.style.top = `${fromY}px`;
+  span.style.pointerEvents = 'none';
+  span.style.zIndex = '9999';
+  document.body.appendChild(span);
+  // 計算飛行向量
+  const dx = toX - fromX;
+  const dy = toY - fromY;
+  const steps = 30;
+  let step = 0;
+  function animate() {
+    step++;
+    const progress = step / steps;
+    // 線性插值
+    span.style.left = `${fromX + dx * progress}px`;
+    span.style.top = `${fromY + dy * progress}px`;
+    if (step < steps) {
+      requestAnimationFrame(animate);
+    } else {
+      // 到達目標後掉落
+      if (typeof onHit === 'function') onHit();
+      startFallingText(span, toX, toY);
+    }
+  }
+  animate();
+}
+
+function startFallingText(span, startX, startY) {
+  let x = startX;
+  let y = startY;
+  let vy = 0;
+  const gravity = 0.8;
+  function fall() {
+    vy += gravity;
+    y += vy;
+    span.style.left = `${x}px`;
+    span.style.top = `${y}px`;
+    if (y < window.innerHeight) {
+      requestAnimationFrame(fall);
+    } else {
+      span.remove();
+    }
+  }
+  fall();
 }
 
 // 插件啟動時執行初始化
